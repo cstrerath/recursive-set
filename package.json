@@ -1,0 +1,45 @@
+{
+  "name": "recursive-set",
+  "version": "1.0.0",
+  "description": "Mutable recursive sets with ZFC axioms for TypeScript",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "tsx test.ts"
+  },
+  "keywords": [
+    "set-theory",
+    "zfc",
+    "cantor",
+    "recursive",
+    "data-structure",
+    "typescript",
+    "fsm",
+    "formal-languages"
+  ],
+  "author": "Christian Strerath",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/<USERNAME>/recursive-set.git"
+  },
+  "bugs": {
+    "url": "https://github.com/<USERNAME>/recursive-set/issues"
+  },
+  "homepage": "https://github.com/<USERNAME>/recursive-set#readme",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.6.0"
+  }
+}
