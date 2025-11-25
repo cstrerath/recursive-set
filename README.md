@@ -21,6 +21,20 @@ Supports arbitrary nesting, detects cycles (Foundation axiom), and includes all 
 
 ---
 
+## Implementation Details
+
+This library enforces strict **ZFC Set Theory** semantics, differing from native JavaScript `Set`s:
+
+- **Extensionality:** Two sets are considered equal if they contain the same elements, regardless of object reference identity.
+  - Example: `new RecursiveSet(1).equals(new RecursiveSet(1))` is `true`.
+  - Native `Set` would treat them as distinct objects.
+- **Foundation Axiom:** The library performs cycle detection to prevent sets from containing themselves (recursively).
+- **Performance:** Internally powered by **Functional Red-Black Trees** (via `functional-red-black-tree`).
+  - Operations like insertion, deletion, and lookup are **O(log n)**.
+  - This allows for stable ordering and efficient deep comparison of nested sets.
+
+---
+
 ## Installation
 
 ```

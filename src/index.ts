@@ -1,344 +1,261 @@
+import createTree from 'functional-red-black-tree';
+
 /**
  * @module recursive-set
  * A mutable recursive set implementation enforcing Cantor's ZFC axioms
+ * Powered by Red-Black Trees for O(log n) operations
  */
 
 /**
- * RecursiveSet: Mutable set with arbitrary nesting depth
- * 
- * Enforced ZFC Axioms (as class invariants):
- * - Extensionality: Sets with same elements are equal
- * - Foundation (Regularity): No membership cycles allowed
- * - Power Set: Can construct 𝒫(A) for any set A
- * - Union: Can construct A ∪ B for any sets A, B
- * - Pairing: Can construct {a, b} for any elements a, b
+ * Comparator function for ZFC sets
+ * Returns -1 if a < b, 1 if a > b, 0 if a == b (structural equality)
  */
-export class RecursiveSet<T = any> {
-    private _elements: Set<T | RecursiveSet<T>>;
-    
-    constructor(...elements: Array<T | RecursiveSet<T>>) {
-        this._elements = new Set();
-        for (const el of elements) {
-            this._addElement(el);
+function compare(a: any, b: any): number {
+    // 1. Identity optimization
+    if (a === b) return 0;
+
+    // 2. Type separation: Sets are "greater" than primitives
+    const isSetA = a instanceof RecursiveSet;
+    const isSetB = b instanceof RecursiveSet;
+    if (isSetA !== isSetB) return isSetA ? 1 : -1;
+
+    // 3. Primitives
+    if (!isSetA) {
+        if (typeof a !== typeof b) {
+            return typeof a > typeof b ? 1 : -1;
         }
-        this._checkInvariants();
+        return a < b ? -1 : 1;
+    }
+
+    // 4. Recursive Sets
+    const sizeA = a.size;
+    const sizeB = b.size;
+    if (sizeA !== sizeB) return sizeA < sizeB ? -1 : 1;
+
+    // Lexicographical comparison
+    const itA = a[Symbol.iterator]();
+    const itB = b[Symbol.iterator]();
+    
+    let nextA = itA.next();
+    let nextB = itB.next();
+    
+    while (!nextA.done) {
+        const cmp = compare(nextA.value, nextB.value);
+        if (cmp !== 0) return cmp;
+        nextA = itA.next();
+        nextB = itB.next();
     }
     
-    /**
-     * Internal: Add element with cycle detection (Foundation axiom)
-     */
-    private _addElement(el: T | RecursiveSet<T>): void {
-        if (el instanceof RecursiveSet) {
-            if (this._wouldCreateCycle(el)) {
-                throw new Error(
-                    "Foundation axiom violated: adding this element would create a membership cycle"
-                );
+    return 0;
+}
+
+export class RecursiveSet<T = any> {
+    // Red-Black Tree (immutable structure, we replace on mutation)
+    private _tree: any; // Type from functional-red-black-tree
+
+    constructor(...elements: Array<T | RecursiveSet<T>>) {
+        this._tree = createTree(compare);
+        
+        for (const el of elements) {
+            this.add(el);
+        }
+    }
+
+    // === Mutable Operations ===
+
+    add(element: T | RecursiveSet<T>): this {
+        if (element instanceof RecursiveSet) {
+            if (!this.has(element)) {
+                if (this._wouldCreateCycle(element)) {
+                    throw new Error("Foundation axiom violated: membership cycle detected");
+                }
             }
         }
-        this._elements.add(el);
+        
+        // Immutable insert - returns new tree
+        // We replace our internal tree (mutable API, immutable data structure)
+        this._tree = this._tree.insert(element, true);
+        return this;
     }
-    
-    /**
-     * Check if adding element would violate Foundation axiom
-     */
+
+    remove(element: T | RecursiveSet<T>): this {
+        this._tree = this._tree.remove(element);
+        return this;
+    }
+
+    clear(): this {
+        this._tree = createTree(compare);
+        return this;
+    }
+
+    // === Immutable Operations ===
+
+    union(other: RecursiveSet<T>): RecursiveSet<T> {
+        const result = new RecursiveSet<T>();
+        for (const el of this) result.add(el);
+        for (const el of other) result.add(el);
+        return result;
+    }
+
+    intersection(other: RecursiveSet<T>): RecursiveSet<T> {
+        const result = new RecursiveSet<T>();
+        for (const el of this) {
+            if (other.has(el)) {
+                result.add(el);
+            }
+        }
+        return result;
+    }
+
+    difference(other: RecursiveSet<T>): RecursiveSet<T> {
+        const result = new RecursiveSet<T>();
+        for (const el of this) {
+            if (!other.has(el)) {
+                result.add(el);
+            }
+        }
+        return result;
+    }
+
+    symmetricDifference(other: RecursiveSet<T>): RecursiveSet<T> {
+        return this.union(other).difference(this.intersection(other));
+    }
+
+    powerset(): RecursiveSet<RecursiveSet<T>> {
+        const elements: Array<T | RecursiveSet<T>> = [];
+        this._tree.forEach((key: any) => elements.push(key));
+        
+        const subsets: RecursiveSet<T>[] = [];
+        const n = elements.length;
+        
+        for (let i = 0; i < (1 << n); i++) {
+            const subset = new RecursiveSet<T>();
+            for (let j = 0; j < n; j++) {
+                if (i & (1 << j)) {
+                    subset.add(elements[j]);
+                }
+            }
+            subsets.push(subset);
+        }
+        return new RecursiveSet<RecursiveSet<T>>(...subsets);
+    }
+
+    cartesianProduct<U>(other: RecursiveSet<U>): RecursiveSet<RecursiveSet<T | U>> {
+        const pairs: RecursiveSet<T | U>[] = [];
+        
+        type TargetType = T | U | RecursiveSet<T | U>;
+
+        for (const x of this) {
+            for (const y of other) {
+                const valX = x as TargetType;
+                const valY = y as TargetType;
+
+                const pair = new RecursiveSet<T | U>(
+                    new RecursiveSet<T | U>(valX),
+                    new RecursiveSet<T | U>(valX, valY)
+                );
+                pairs.push(pair);
+            }
+        }
+        return new RecursiveSet<RecursiveSet<T | U>>(...pairs);
+    }
+
+    // === Predicates ===
+
+    has(element: T | RecursiveSet<T>): boolean {
+        return this._tree.get(element) !== undefined;
+    }
+
+    isSubset(other: RecursiveSet<T>): boolean {
+        for (const el of this) {
+            if (!other.has(el)) return false;
+        }
+        return true;
+    }
+
+    isSuperset(other: RecursiveSet<T>): boolean {
+        return other.isSubset(this);
+    }
+
+    isProperSubset(other: RecursiveSet<T>): boolean {
+        return this.isSubset(other) && !this.equals(other);
+    }
+
+    isEmpty(): boolean {
+        return this.size === 0;
+    }
+
+    equals(other: RecursiveSet<T>): boolean {
+        return compare(this, other) === 0;
+    }
+
+    // === Internals ===
+
     private _wouldCreateCycle(element: RecursiveSet<T>): boolean {
         const visited = new Set<RecursiveSet<any>>();
-        const toCheck: RecursiveSet<any>[] = [element];
+        const stack = [element];
         
-        while (toCheck.length > 0) {
-            const current = toCheck.pop()!;
-            if (current === this) {
-                return true;
-            }
-            if (visited.has(current)) {
-                continue;
-            }
+        while (stack.length > 0) {
+            const current = stack.pop()!;
+            if (current === this) return true;
+            
+            if (visited.has(current)) continue;
             visited.add(current);
             
-            for (const el of current._elements) {
-                if (el instanceof RecursiveSet) {
-                    toCheck.push(el);
+            for (const child of current) {
+                if (child instanceof RecursiveSet) {
+                    stack.push(child);
                 }
             }
         }
         return false;
     }
-    
-    /**
-     * Verify class invariants (Design by Contract)
-     */
-    private _checkInvariants(): void {
-        // Extensionality: enforced by Set semantics
-        // Foundation: enforced by _wouldCreateCycle
-        // Well-definedness: enforced by TypeScript type system
-        
-        // Additional runtime checks can be added here
-        if (process.env.NODE_ENV === 'development') {
-            // More expensive checks only in development
-        }
-    }
-    
-    // === Mutable Operations ===
-    
-    /**
-     * Add element to this set (Pairing axiom)
-     * @returns this for method chaining
-     */
-    add(element: T | RecursiveSet<T>): this {
-        this._addElement(element);
-        this._checkInvariants();
-        return this;
-    }
-    
-    /**
-     * Remove element from this set
-     * @returns this for method chaining
-     */
-    remove(element: T | RecursiveSet<T>): this {
-        this._elements.delete(element);
-        return this;
-    }
-    
-    /**
-     * Remove all elements
-     * @returns this for method chaining
-     */
-    clear(): this {
-        this._elements.clear();
-        return this;
-    }
-    
-    // === Immutable Operations (return new sets) ===
-    
-    /**
-     * Union of two sets (Union axiom)
-     * Returns A ∪ B
-     */
-    union(other: RecursiveSet<T>): RecursiveSet<T> {
-        const result = new RecursiveSet<T>();
-        result._elements = new Set([...this._elements, ...other._elements]);
-        return result;
-    }
-    
-    /**
-     * Intersection of two sets
-     * Returns A ∩ B
-     */
-    intersection(other: RecursiveSet<T>): RecursiveSet<T> {
-        const result = new RecursiveSet<T>();
-        for (const el of this._elements) {
-            if (other.has(el)) {
-                result._elements.add(el);
-            }
-        }
-        return result;
-    }
-    
-    /**
-     * Set difference
-     * Returns A \ B (elements in A but not in B)
-     */
-    difference(other: RecursiveSet<T>): RecursiveSet<T> {
-        const result = new RecursiveSet<T>();
-        for (const el of this._elements) {
-            if (!other.has(el)) {
-                result._elements.add(el);
-            }
-        }
-        return result;
-    }
-    
-    /**
-     * Symmetric difference
-     * Returns A △ B (elements in either but not both)
-     */
-    symmetricDifference(other: RecursiveSet<T>): RecursiveSet<T> {
-        return this.union(other).difference(this.intersection(other));
-    }
-    
-    /**
-     * Power set construction (Power Set axiom)
-     * Returns 𝒫(A) - set of all subsets
-     */
-    powerset(): RecursiveSet<RecursiveSet<T>> {
-        const elements = Array.from(this._elements);
-        const subsets: RecursiveSet<T>[] = [];
-        
-        // Generate all 2^n subsets
-        const n = elements.length;
-        for (let i = 0; i < (1 << n); i++) {
-            const subset = new RecursiveSet<T>();
-            for (let j = 0; j < n; j++) {
-                if (i & (1 << j)) {
-                    subset._elements.add(elements[j]);
-                }
-            }
-            subsets.push(subset);
-        }
-        
-        return new RecursiveSet<RecursiveSet<T>>(...subsets);
-    }
-    
-    /**
-     * Cartesian product
-     * Returns A × B as set of ordered pairs {{a}, {a,b}}
-     */
-    cartesianProduct<U>(other: RecursiveSet<U>): RecursiveSet<RecursiveSet<T | U>> {
-        const pairs: RecursiveSet<T | U>[] = [];
-        
-        for (const x of this._elements) {
-            for (const y of other._elements) {
-                // Kuratowski ordered pair: (x,y) := {{x}, {x,y}}
-                const pair = new RecursiveSet<T | U>(
-                    new RecursiveSet<T | U>(x),
-                    new RecursiveSet<T | U>(x, y)
-                );
-                pairs.push(pair);
-            }
-        }
-        
-        return new RecursiveSet<RecursiveSet<T | U>>(...pairs);
-    }
-    
-    // === Predicates ===
-    
-    /**
-     * Check membership (∈)
-     */
-    has(element: T | RecursiveSet<T>): boolean {
-        return this._elements.has(element);
-    }
-    
-    /**
-     * Check if subset (⊆)
-     */
-    isSubset(other: RecursiveSet<T>): boolean {
-        for (const el of this._elements) {
-            if (!other.has(el)) {
-                return false;
-            }
-        }
-        return true;
-    }
-    
-    /**
-     * Check if superset (⊇)
-     */
-    isSuperset(other: RecursiveSet<T>): boolean {
-        return other.isSubset(this);
-    }
-    
-    /**
-     * Check if proper subset (⊂)
-     */
-    isProperSubset(other: RecursiveSet<T>): boolean {
-        return this.isSubset(other) && !this.equals(other);
-    }
-    
-    /**
-     * Check if empty set
-     */
-    isEmpty(): boolean {
-        return this._elements.size === 0;
-    }
-    
-    // === Extensionality (Equality) ===
-    
-    /**
-     * Structural equality (Extensionality axiom)
-     * Two sets are equal iff they have the same elements
-     */
-    equals(other: RecursiveSet<T>): boolean {
-        if (this._elements.size !== other._elements.size) {
-            return false;
-        }
-        
-        for (const el of this._elements) {
-            if (el instanceof RecursiveSet) {
-                // Deep comparison for nested sets
-                let found = false;
-                for (const otherEl of other._elements) {
-                    if (otherEl instanceof RecursiveSet && el.equals(otherEl)) {
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) return false;
-            } else {
-                if (!other.has(el)) return false;
-            }
-        }
-        return true;
-    }
-    
+
     // === Utility ===
-    
-    /**
-     * Cardinality |A|
-     */
+
     get size(): number {
-        return this._elements.size;
+        return this._tree.length;
     }
-    
-    /**
-     * Convert to native Set (shallow)
-     */
+
     toSet(): Set<T | RecursiveSet<T>> {
-        return new Set(this._elements);
+        const result = new Set<T | RecursiveSet<T>>();
+        this._tree.forEach((key: any) => result.add(key));
+        return result;
     }
-    
-    /**
-     * Iterate over elements
-     */
+
     *[Symbol.iterator](): Iterator<T | RecursiveSet<T>> {
-        yield* this._elements;
+        const keys: Array<T | RecursiveSet<T>> = [];
+        this._tree.forEach((key: any) => keys.push(key));
+        yield* keys;
     }
-    
-    /**
-     * Pretty print with mathematical notation
-     */
+
     toString(): string {
-        if (this.isEmpty()) {
-            return "∅";
-        }
-        
-        const elements = Array.from(this._elements).map(el => {
-            if (el instanceof RecursiveSet) {
-                return el.toString();
+        if (this.isEmpty()) return "∅";
+        const elements: string[] = [];
+        this._tree.forEach((key: any) => {
+            if (key instanceof RecursiveSet) {
+                elements.push(key.toString());
+            } else {
+                elements.push(String(key));
             }
-            return String(el);
         });
-        
         return `{${elements.join(", ")}}`;
     }
-    
-    /**
-     * For console.log
-     */
+
     [Symbol.for('nodejs.util.inspect.custom')](): string {
         return this.toString();
     }
 }
 
-// === Helper Functions ===
-
-/**
- * Create empty set (Null Set axiom)
- */
+// === Helpers ===
 export function emptySet<T = any>(): RecursiveSet<T> {
     return new RecursiveSet<T>();
 }
 
-/**
- * Create singleton set
- */
 export function singleton<T>(element: T): RecursiveSet<T> {
     return new RecursiveSet<T>(element);
 }
 
-/**
- * Create set from iterable
- */
 export function fromIterable<T>(iterable: Iterable<T>): RecursiveSet<T> {
     return new RecursiveSet<T>(...iterable);
 }
