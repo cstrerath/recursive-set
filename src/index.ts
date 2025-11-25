@@ -123,7 +123,7 @@ export class RecursiveSet<T = any> {
 
     powerset(): RecursiveSet<RecursiveSet<T>> {
         const elements: Array<T | RecursiveSet<T>> = [];
-        this._tree.forEach((key: any) => elements.push(key));
+        this._tree.forEach((key: any) => { elements.push(key); return undefined; });
         
         const subsets: RecursiveSet<T>[] = [];
         const n = elements.length;
@@ -219,13 +219,13 @@ export class RecursiveSet<T = any> {
 
     toSet(): Set<T | RecursiveSet<T>> {
         const result = new Set<T | RecursiveSet<T>>();
-        this._tree.forEach((key: any) => result.add(key));
+        this._tree.forEach((key: any) => { result.add(key); return undefined; });
         return result;
     }
 
     *[Symbol.iterator](): Iterator<T | RecursiveSet<T>> {
         const keys: Array<T | RecursiveSet<T>> = [];
-        this._tree.forEach((key: any) => keys.push(key));
+        this._tree.forEach((key: any) => { keys.push(key); return undefined; });
         yield* keys;
     }
 
@@ -238,6 +238,7 @@ export class RecursiveSet<T = any> {
             } else {
                 elements.push(String(key));
             }
+            return undefined;
         });
         return `{${elements.join(", ")}}`;
     }
