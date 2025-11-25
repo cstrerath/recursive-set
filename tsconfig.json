@@ -1,19 +1,19 @@
 {
   "compilerOptions": {
-    "target": "ES2022",                  /* Modern JavaScript */
-    "module": "ES2022",                  /* ESM modules */
-    "lib": ["ES2022"],                   /* Available APIs */
-    "outDir": "./dist",                  /* Compiled JS output directory */
-    "rootDir": "./src",                  /* TypeScript source files */
-    "declaration": true,                 /* Generate .d.ts type files */
-    "declarationMap": true,              /* Source maps for types */
-    "sourceMap": true,                   /* Source maps for debugging */
-    "strict": true,                      /* Enable all strict checks */
-    "esModuleInterop": true,             /* Better module compatibility */
-    "skipLibCheck": true,                /* Faster compilation */
+    "target": "ES2022",
+    "module": "ES2022",
+    "lib": ["ES2022"],
+    "outDir": "./dist/esm",
+    "rootDir": "./src",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "moduleResolution": "node"           /* Node.js module resolution */
+    "moduleResolution": "node"
   },
-  "include": ["src/**/*"],               /* Files to compile */
-  "exclude": ["node_modules", "dist"]    /* Files to ignore */
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
 }
