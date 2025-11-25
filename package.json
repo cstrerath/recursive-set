@@ -7,11 +7,15 @@
   "type": "module",
   "exports": {
     ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     }
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
+    "prepublishOnly": "npm run build",
     "build": "tsc",
     "watch": "tsc --watch",
     "clean": "rm -rf dist",
@@ -31,12 +35,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/<USERNAME>/recursive-set.git"
+    "url": "git+https://github.com/cstrerath/recursive-set.git"
   },
   "bugs": {
-    "url": "https://github.com/<USERNAME>/recursive-set/issues"
+    "url": "https://github.com/cstrerath/recursive-set/issues"
   },
-  "homepage": "https://github.com/<USERNAME>/recursive-set#readme",
+  "homepage": "https://github.com/cstrerath/recursive-set#readme",
   "devDependencies": {
     "@types/node": "^20.0.0",
     "tsx": "^4.20.6",
