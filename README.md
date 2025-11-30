@@ -11,13 +11,14 @@ Supports arbitrary nesting, detects cycles (Foundation axiom), and includes all 
 
 ## Features
 
-✨ **Mutable, recursive sets** with arbitrary depth  
-🔍 **Extensional equality** (two sets are equal iff their elements are equal)  
-🛡️ **Cycle detection** (Foundation Axiom): prevents self-containing sets  
-🧮 **Classic set operations**: union, intersection, difference, symmetric difference  
-📐 **Power set and Cartesian product**  
-🎯 **TypeScript generics**: works with strings, numbers, objects, states, even sets of sets  
-🤖 **Ready for FSM**, mathematical, symbolic and practical use cases
+**Mutable, recursive sets** with arbitrary depth  
+**Extensional equality** (two sets are equal iff their elements are equal)  
+**Cycle detection** (Foundation Axiom): prevents self-containing sets  
+**Copy-on-Write**: O(1) cloning via structural sharing  
+**Classic set operations**: union, intersection, difference, symmetric difference  
+**Power set and Cartesian product**  
+**TypeScript generics**: works with strings, numbers, objects, states, even sets of sets  
+**Ready for FSM**, mathematical, symbolic and practical use cases
 
 ---
 
@@ -29,26 +30,22 @@ This library enforces strict **ZFC Set Theory** semantics, differing from native
   - Example: `new RecursiveSet(1).equals(new RecursiveSet(1))` is `true`.
   - Native `Set` would treat them as distinct objects.
 - **Foundation Axiom:** The library performs cycle detection to prevent sets from containing themselves (recursively).
+- **NaN Handling:** In strict ZFC semantics, `NaN` is not a valid element. Adding `NaN` will explicitly throw an error.
 - **Performance:** Internally powered by **Functional Red-Black Trees** (via `functional-red-black-tree`).
   - Operations like insertion, deletion, and lookup are **O(log n)**.
-  - This allows for stable ordering and efficient deep comparison of nested sets.
+  - **Cloning is O(1)** (Copy-on-Write), making it ideal for backtracking algorithms.
 
 ---
 
 ## Installation
 
 ```
-
 npm install recursive-set
-
 ```
 
 ---
-
 ## Quickstart
-
 ```
-
 import { RecursiveSet } from "recursive-set";
 
 const q0 = "q0", q1 = "q1";
@@ -58,7 +55,6 @@ const classes = new RecursiveSet(eqClass);
 classes.add(new RecursiveSet("q2", "q3"));   // {{q0, q1}, {q2, q3}}
 
 console.log(classes.toString());             // {{q0, q1}, {q2, q3}}
-
 ```
 
 ---
@@ -68,17 +64,18 @@ console.log(classes.toString());             // {{q0, q1}, {q2, q3}}
 ### Constructor
 
 ```
-
 new RecursiveSet<T>(...elements: Array<T | RecursiveSet<T>>)
-
 ```
 
 ### Methods
 
 **Mutation:**
-- `add(element: T | RecursiveSet<T>): this` – Add element (chainable)
+- `add(element: T | RecursiveSet<T>): this` – Add element (chainable). **Throws if element is NaN.**
 - `remove(element: T | RecursiveSet<T>): this` – Remove element (chainable)
 - `clear(): this` – Remove all elements (chainable)
+
+**Snapshot:**
+- `clone(): RecursiveSet<T>` – Creates a shallow copy in **O(1)** time (Copy-on-Write).
 
 **Set Operations:**
 - `union(other: RecursiveSet<T>): RecursiveSet<T>` – A ∪ B
@@ -108,63 +105,55 @@ new RecursiveSet<T>(...elements: Array<T | RecursiveSet<T>>)
 ### Basic Usage
 
 ```
-
 const s1 = new RecursiveSet(1, 2, 3);
 const s2 = new RecursiveSet(2, 3, 4);
 
 console.log(s1.union(s2));        // {1, 2, 3, 4}
 console.log(s1.intersection(s2)); // {2, 3}
 console.log(s1.difference(s2));   // {1}
-
 ```
 
-### FSM Equivalence Classes
+### Backtracking with O(1) Clone
 
 ```
+const state = new RecursiveSet("init");
+// ... perform some operations ...
 
-const eq1 = new RecursiveSet("q0", "q1");
-const eq2 = new RecursiveSet("q2", "q3");
-const eqClasses = new RecursiveSet(eq1, eq2);
+// Create a checkpoint (O(1))
+const checkpoint = state.clone();
 
-console.log(eqClasses.toString()); // {{q0, q1}, {q2, q3}}
-
+state.add("newState");
+// If this path fails, simply revert:
+// state = checkpoint; (conceptually)
 ```
 
 ### Power Set
 
 ```
-
 const set = new RecursiveSet(1, 2);
 const power = set.powerset();
 
 console.log(power.toString()); // {∅, {1}, {2}, {1, 2}}
-
 ```
 
-### Foundation Axiom (Cycle Detection)
+### Strictness: NaN and Cycles
 
 ```
-
 const s = new RecursiveSet(1, 2);
+
+// Cycle Detection
 try {
-s.add(s);    // ❌ Throws error
+s.add(s);
 } catch (e) {
 console.error(e.message); // "Foundation axiom violated..."
 }
 
-```
-
-### Method Chaining
-
-```
-
-const set = new RecursiveSet(1, 2)
-.add(3)
-.add(4)
-.remove(1);
-
-console.log(set); // {2, 3, 4}
-
+// NaN Rejection
+try {
+s.add(NaN);
+} catch (e) {
+console.error(e.message); // "NaN is not supported..."
+}
 ```
 
 ---
@@ -182,25 +171,18 @@ console.log(set); // {2, 3, 4}
 ## Development
 
 ```
-
-
 # Clone repository
-
-git clone https://github.com/<USERNAME>/recursive-set.git
+git clone https://github.com/cstrerath/recursive-set.git
 cd recursive-set
 
 # Install dependencies
-
 npm install
 
 # Build
-
 npm run build
 
 # Run tests
-
 npx tsx test.ts
-
 ```
 
 ---
@@ -226,3 +208,4 @@ Inspired by:
 - Cantor's set theory
 - Zermelo-Fraenkel set theory with the Axiom of Choice (ZFC)
 - Practical needs in FSM algorithms and formal language theory
+- Powered by [functional-red-black-tree](https://github.com/mikolalysenko/functional-red-black-tree) for O(log n) persistence

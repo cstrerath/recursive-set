@@ -63,6 +63,22 @@ export class RecursiveSet<T = any> {
         }
     }
 
+    // === Copy-on-Write Support ===
+
+    /**
+     * Creates a shallow copy of the set in O(1) time.
+     * Due to the immutable nature of the underlying tree, 
+     * this is extremely efficient (structural sharing).
+     */
+    clone(): RecursiveSet<T> {
+        const clone = new RecursiveSet<T>();
+        // We replace the empty tree directly with the reference to the current tree.
+        // Since the tree is persistent/immutable, this is safe and instant.
+        clone._tree = this._tree;
+        return clone;
+    }
+
+
     // === Mutable Operations ===
 
     add(element: T | RecursiveSet<T>): this {

@@ -281,4 +281,25 @@ assert(modSet.has(99), "The set object should contain 99");
 console.log("✓ Snapshot isolation verified");
 console.log();
 
+// ============================================================================
+// 15. Copy-on-Write (Clone)
+// ============================================================================
+console.log('--- Test 15: Copy-on-Write (Clone) ---');
+const original = new RecursiveSet(1, 2, 3);
+const copy = original.clone();
+
+assert(original.size === 3, "Original has size 3");
+assert(copy.size === 3, "Copy has size 3");
+assert(original.equals(copy), "Copy is equal to original");
+
+// Mutate copy
+copy.add(4);
+
+assert(original.size === 3, "Original remains unchanged after mutating copy");
+assert(copy.size === 4, "Copy reflects the change");
+assert(!original.has(4), "Original does not contain new element");
+console.log("✓ O(1) Cloning verified");
+console.log();
+
+
 console.log("=== All Tests Passed Successfully ✓ ===");
