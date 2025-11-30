@@ -24,7 +24,9 @@ function compare(a: any, b: any): number {
         if (typeof a !== typeof b) {
             return typeof a > typeof b ? 1 : -1;
         }
-        return a < b ? -1 : 1;
+        if (a < b) return -1;
+        if (a > b) return 1;
+        return 0;
     }
 
     // 4. Recursive Sets
@@ -64,16 +66,26 @@ export class RecursiveSet<T = any> {
     // === Mutable Operations ===
 
     add(element: T | RecursiveSet<T>): this {
+        // 0. Guard: Explicitly ban NaN
+        if (typeof element === "number" && Number.isNaN(element)) {
+            throw new Error("NaN is not supported as an element of RecursiveSet");
+        }
+
+        // 1. Defensive: Idempotency Check
+        // Avoid duplicate inserts if the element is already present.
+        // This also mitigates race-condition-like issues with persistent tree structures during rapid mutations.
+        if (this.has(element)) {
+            return this;
+        }
+
+        // 2. Cycle Check (Foundation Axiom)
         if (element instanceof RecursiveSet) {
-            if (!this.has(element)) {
-                if (this._wouldCreateCycle(element)) {
-                    throw new Error("Foundation axiom violated: membership cycle detected");
-                }
+            if (this._wouldCreateCycle(element)) {
+                throw new Error("Foundation axiom violated: membership cycle detected");
             }
         }
-        
-        // Immutable insert - returns new tree
-        // We replace our internal tree (mutable API, immutable data structure)
+
+        // 3. Insert
         this._tree = this._tree.insert(element, true);
         return this;
     }
