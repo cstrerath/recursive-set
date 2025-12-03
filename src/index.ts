@@ -1,63 +1,120 @@
-import createTree from 'functional-red-black-tree';
+import createTree, { Tree, Iterator as TreeIterator } from 'functional-red-black-tree';
 
 /**
  * @module recursive-set
- * A mutable recursive set implementation enforcing Cantor's ZFC axioms.
+ * A mutable recursive set implementation.
  * Powered by functional Red-Black Trees for O(log n) operations and O(1) cloning.
  */
-export class RecursiveSet<T = any> {
-    // Underlying persistent data structure
-    private _tree: any; 
-    // Internal XOR-based hash for O(1) inequality checks
-    private _hash: number = 0;
 
-    /**
-     * Static comparator for Red-Black Tree ordering.
-     * Handles primitives, RecursiveSets, and deep structural equality.
-     */
-    static compare(a: any, b: any): number {
-        // 1. Identity optimization
+/**
+ * A lightweight wrapper for Tuples to enable Value-Equality in RecursiveSet.
+ * Immutable by design.
+ */
+export class Tuple<T extends unknown[]> {
+    readonly values: T;
+
+    constructor(...values: T) {
+        this.values = values;
+    }
+
+    get length(): number {
+        return this.values.length;
+    }
+
+    get<K extends keyof T>(index: K): T[K] {
+        return this.values[index];
+    }
+
+    *[Symbol.iterator](): Iterator<T[number]> {
+        for (const val of this.values) {
+            yield val;
+        }
+    }
+
+    toString(): string {
+        return `(${this.values.map(v => String(v)).join(', ')})`;
+    }
+    
+    [Symbol.for('nodejs.util.inspect.custom')](): string {
+        return this.toString();
+    }
+}
+
+    export class RecursiveSet<T> {
+        private _tree: Tree<T | RecursiveSet<T>, boolean>;
+
+        /**
+         * Static comparator for Red-Black Tree ordering.
+         * Supports Primitives, RecursiveSets and Tuples.
+         * REJECTS plain JS Objects and Arrays to enforce strict semantics.
+         */
+        static compare(a: unknown, b: unknown): number {
         if (a === b) return 0;
 
-        // 2. Type separation
         const isSetA = a instanceof RecursiveSet;
         const isSetB = b instanceof RecursiveSet;
-        if (isSetA !== isSetB) return isSetA ? 1 : -1;
+        const isTupA = a instanceof Tuple;
+        const isTupB = b instanceof Tuple;
 
-        // 3. Primitives
-        if (!isSetA) {
-            if (typeof a !== typeof b) return typeof a > typeof b ? 1 : -1;
-            if (a < b) return -1;
-            if (a > b) return 1;
+        // Sort Order: Primitives (0) < Tuples (1) < Sets (2)
+        const getTypeScore = (isSet: boolean, isTup: boolean) => {
+            if (isSet) return 2;
+            if (isTup) return 1;
+            return 0;
+        };
+        
+        const scoreA = getTypeScore(isSetA, isTupA);
+        const scoreB = getTypeScore(isSetB, isTupB);
+
+        if (scoreA !== scoreB) return scoreA < scoreB ? -1 : 1;
+
+        // 1. Sets
+        if (isSetA && isSetB) {
+            const setA = a as RecursiveSet<unknown>;
+            const setB = b as RecursiveSet<unknown>;
+            
+            if (setA.size !== setB.size) return setA.size < setB.size ? -1 : 1;
+
+            let iterA = setA._tree.begin;
+            let iterB = setB._tree.begin;
+
+            while (iterA.valid && iterB.valid) {
+                const cmp = RecursiveSet.compare(iterA.key, iterB.key);
+                if (cmp !== 0) return cmp;
+                iterA.next();
+                iterB.next();
+            }
             return 0;
         }
 
-        // 4. Recursive Sets
-        const sizeA = a.size;
-        const sizeB = b.size;
-        if (sizeA !== sizeB) return sizeA < sizeB ? -1 : 1;
-
-        // Hash mismatch implies inequality (O(1))
-        if (a._hash !== b._hash) return a._hash < b._hash ? -1 : 1;
-
-        // Deep structural comparison using internal iterators (low-level optimization)
-        let iterA = a._tree.begin;
-        let iterB = b._tree.begin;
-
-        while (iterA.valid && iterB.valid) {
-            const cmp = RecursiveSet.compare(iterA.key, iterB.key);
-            if (cmp !== 0) return cmp;
-
-            iterA.next();
-            iterB.next();
+        // 2. Tuples
+        if (isTupA && isTupB) {
+            const tupA = a as Tuple<unknown[]>;
+            const tupB = b as Tuple<unknown[]>;
+            
+            if (tupA.length !== tupB.length) return tupA.length < tupB.length ? -1 : 1;
+            
+            for (let i = 0; i < tupA.length; i++) {
+                const cmp = RecursiveSet.compare(tupA.get(i), tupB.get(i));
+                if (cmp !== 0) return cmp;
+            }
+            return 0;
         }
 
+        // 3. Primitives (guaranteed by add() validation)
+        const tA = typeof a;
+        const tB = typeof b;
+        if (tA !== tB) return tA > tB ? 1 : -1;
+        
+        // @ts-ignore
+        if (a < b) return -1;
+        // @ts-ignore
+        if (a > b) return 1;
         return 0;
     }
 
     constructor(...elements: Array<T | RecursiveSet<T>>) {
-        this._tree = createTree(RecursiveSet.compare);
-        
+        this._tree = createTree<T | RecursiveSet<T>, boolean>(RecursiveSet.compare);
         for (const el of elements) {
             this.add(el);
         }
@@ -67,83 +124,60 @@ export class RecursiveSet<T = any> {
 
     /**
      * Creates a shallow copy of the set in O(1) time.
-     * Leveraging the persistent nature of the underlying tree.
      */
     clone(): RecursiveSet<T> {
         const clone = new RecursiveSet<T>();
         clone._tree = this._tree;
-        clone._hash = this._hash;
         return clone;
     }
 
     // === Mutable Operations ===
 
     add(element: T | RecursiveSet<T>): this {
+        // Validation
         if (typeof element === "number" && Number.isNaN(element)) {
-            throw new Error("NaN is not supported as an element of RecursiveSet");
+            throw new Error("NaN is not supported");
+        }
+        
+        const isSet = element instanceof RecursiveSet;
+        const isTup = element instanceof Tuple;
+        const isObject = element !== null && typeof element === 'object' && !isSet && !isTup;
+
+        if (isObject) {
+            throw new Error(
+                "Plain Objects and Arrays are not supported. " +
+                "Use Tuple for sequences or RecursiveSet for nested structures."
+            );
         }
 
-        // Idempotency check prevents redundant hash updates and tree operations
-        if (this.has(element)) {
-            return this;
-        }
-
-        // Enforce Foundation Axiom (prevent cycles)
-        if (element instanceof RecursiveSet) {
-            if (this._wouldCreateCycle(element)) {
-                throw new Error("Foundation axiom violated: membership cycle detected");
-            }
-        }
-
-        // Update Hash (XOR)
-        this._hash = (this._hash ^ this._computeHash(element)) | 0;
-
-        // Insert into persistent tree
+        // Idempotency
+        if (this.has(element)) return this;
+        
         this._tree = this._tree.insert(element, true);
         return this;
     }
 
-    remove(element: T | RecursiveSet<T>): this {
-        if (!this.has(element)) {
-            return this;
-        }
 
-        // Update Hash (XOR removes the element from hash)
-        this._hash = (this._hash ^ this._computeHash(element)) | 0;
-        
+    remove(element: T | RecursiveSet<T>): this {
         this._tree = this._tree.remove(element);
         return this;
     }
 
     clear(): this {
-        this._tree = createTree(RecursiveSet.compare);
-        this._hash = 0;
+        this._tree = createTree<T | RecursiveSet<T>, boolean>(RecursiveSet.compare);
         return this;
     }
 
-    private _computeHash(element: any): number {
-        if (element instanceof RecursiveSet) return element._hash;
-        if (typeof element === 'number') return element | 0;
-        if (typeof element === 'string') {
-            let h = 0;
-            for (let i = 0; i < element.length; i++)
-                h = Math.imul(31, h) + element.charCodeAt(i) | 0;
-            return h;
-        }
-        return 0;
-    }
-
-    // === Immutable Operations ===
+    // === Set Operations ===
 
     union(other: RecursiveSet<T>): RecursiveSet<T> {
-        const result = this.clone(); // Optimization: Start with clone of this
+        const result = this.clone(); 
         for (const el of other) result.add(el);
         return result;
     }
 
     intersection(other: RecursiveSet<T>): RecursiveSet<T> {
         const result = new RecursiveSet<T>();
-        // Iterate over smaller set for performance optimization
         const [smaller, larger] = this.size < other.size ? [this, other] : [other, this];
         for (const el of smaller) {
             if (larger.has(el)) {
@@ -164,7 +198,6 @@ export class RecursiveSet<T = any> {
     }
 
     symmetricDifference(other: RecursiveSet<T>): RecursiveSet<T> {
-        // (A \ B) U (B \ A)
         return this.difference(other).union(other.difference(this));
     }
 
@@ -173,7 +206,7 @@ export class RecursiveSet<T = any> {
         if (n > 30) throw new Error("Powerset size exceeds 32-bit integer limit");
 
         const elements: Array<T | RecursiveSet<T>> = [];
-        this._tree.forEach((key: any) => { elements.push(key); return undefined; });
+        this._tree.forEach((key: T | RecursiveSet<T>) => { elements.push(key); });
         
         const subsets: RecursiveSet<T>[] = [];
         
@@ -189,24 +222,19 @@ export class RecursiveSet<T = any> {
         return new RecursiveSet<RecursiveSet<T>>(...subsets);
     }
 
-    cartesianProduct<U>(other: RecursiveSet<U>): RecursiveSet<RecursiveSet<T | U>> {
-        const pairs: RecursiveSet<T | U>[] = [];
-        type TargetType = T | U | RecursiveSet<T | U>;
-
+    /**
+     * Returns the Cartesian product as a set of Tuples.
+     * Uses the Tuple class to ensure structural equality.
+     */
+        cartesianProduct<U>(other: RecursiveSet<U>): RecursiveSet<Tuple<[T | RecursiveSet<T>, U | RecursiveSet<U>]>> {
+        const result = new RecursiveSet<Tuple<[T | RecursiveSet<T>, U | RecursiveSet<U>]>>();
+        
         for (const x of this) {
             for (const y of other) {
-                const valX = x as TargetType;
-                const valY = y as TargetType;
-
-                // Kuratowski pair: (x, y) = {{x}, {x, y}}
-                const pair = new RecursiveSet<T | U>(
-                    new RecursiveSet<T | U>(valX),
-                    new RecursiveSet<T | U>(valX, valY)
-                );
-                pairs.push(pair);
+                result.add(new Tuple(x, y));
             }
         }
-        return new RecursiveSet<RecursiveSet<T | U>>(...pairs);
+        return result;
     }
 
     // === Predicates ===
@@ -239,30 +267,6 @@ export class RecursiveSet<T = any> {
         return RecursiveSet.compare(this, other) === 0;
     }
 
-    // === Internals ===
-
-    private _wouldCreateCycle(element: RecursiveSet<T>): boolean {
-        const visited = new Set<RecursiveSet<any>>();
-        const stack = [element];
-        
-        while (stack.length > 0) {
-            const current = stack.pop()!;
-            if (current === this) return true;
-            
-            if (visited.has(current)) continue;
-            visited.add(current);
-            
-            // Optimization: Direct internal tree traversal avoids iterator overhead
-            current._tree.forEach((key: any) => {
-                if (key instanceof RecursiveSet) {
-                    stack.push(key);
-                }
-                return undefined;
-            });
-        }
-        return false;
-    }
-
     // === Utility ===
 
     get size(): number {
@@ -271,11 +275,11 @@ export class RecursiveSet<T = any> {
 
     toSet(): Set<T | RecursiveSet<T>> {
         const result = new Set<T | RecursiveSet<T>>();
-        this._tree.forEach((key: any) => { result.add(key); return undefined; });
+        this._tree.forEach((key: T | RecursiveSet<T>) => { result.add(key); });
         return result;
     }
 
-    // Lazy Iterator (Critical for performance)
+    // Lazy Iterator
     *[Symbol.iterator](): Iterator<T | RecursiveSet<T>> {
         let iter = this._tree.begin;
         while(iter.valid) {
@@ -287,13 +291,14 @@ export class RecursiveSet<T = any> {
     toString(): string {
         if (this.isEmpty()) return "∅";
         const elements: string[] = [];
-        this._tree.forEach((key: any) => {
+        this._tree.forEach((key: unknown) => {
             if (key instanceof RecursiveSet) {
+                elements.push(key.toString());
+            } else if (key instanceof Tuple) {
                 elements.push(key.toString());
             } else {
                 elements.push(String(key));
             }
-            return undefined;
         });
         return `{${elements.join(", ")}}`;
     }
@@ -305,7 +310,7 @@ export class RecursiveSet<T = any> {
 
 // === Helpers ===
 
-export function emptySet<T = any>(): RecursiveSet<T> {
+export function emptySet<T>(): RecursiveSet<T> {
     return new RecursiveSet<T>();
 }
 
