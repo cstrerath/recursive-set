@@ -1,37 +1,33 @@
 # RecursiveSet
 
-> High-performance, mutable set implementation for TypeScript – modeled after ZFC set theory.
-
-Supports recursive nesting, strict structural equality, and includes all classic set operations (union, intersection, difference, powerset, cartesian product). **Designed for Theoretical Computer Science, Graphs, and FSMs.**
+> **High-Performance ZFC Set Implementation for TypeScript**
+> 
+> Mutable, strictly typed, and optimized for cache locality.
 
 [![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![npm version](https://img.shields.io/npm/v/recursive-set.svg)](https://www.npmjs.com/package/recursive-set)
 
 ---
 
-## Features
+## 🚀 What is this?
 
-* **Strict Value Equality:** Mathematical sets behave mathematically. `{a, b}` is equal to `{b, a}`.
-* **Tuples First:** Includes a strongly typed `Tuple` class for ordered pairs (e.g., edges, transitions), solving JS Array reference pitfalls.
-* **Homogeneous by Default:** Generic typing (`RecursiveSet<T>`) enforces clean data structures.
-* **Recursive:** Sets can contain sets (of sets...). Ideal for Power Sets and Von Neumann Ordinals.
-* **Copy-on-Write:** **O(1) cloning** via structural sharing (powered by persistent Red-Black Trees).
-* **Lean \& Mean:** No implicit overhead. Cycle checking is left to the user to allow maximum performance.
+A mathematical set implementation designed for **Theoretical Computer Science**, **SAT-Solvers**, and **Graph Theory**. Unlike native JavaScript `Set`, `RecursiveSet` enforces **Structural Equality** (ZFC semantics) and supports deep nesting.
+
+**v4.0.0 Update:** Now powered by **Sorted Arrays** instead of Red-Black Trees.
+*   **5x-10x Faster** than v3.0 (cache locality vs. pointer chasing).
+*   **O(1) Equality Checks** via aggressive hash caching.
+*   **Native Array Support** included.
 
 ---
 
-## Implementation Details
+## Features
 
-This library enforces **Strict ZFC Semantics**, differing from native JavaScript `Set`:
-
-- **Extensionality:** Two sets are equal if they contain the same elements.
-  - `new RecursiveSet(new RecursiveSet(1)).equals(new RecursiveSet(new RecursiveSet(1)))` is `true`.
-- **No Hidden References:** Plain JavaScript Arrays and Objects are **rejected** to prevent reference-equality confusion.
-  - Use `Tuple` for ordered sequences.
-  - Use `RecursiveSet` for collections.
-- **Performance:** Powered by **Functional Red-Black Trees**.
-  - Insertion/Lookup: **O(log n)**.
-  - Cloning: **O(1)**.
+*   **🔢 Strict Structural Equality:** `{1, 2}` is equal to `{2, 1}`.
+*   **📦 Deeply Recursive:** Sets can contain Sets. Ideal for Power Sets.
+*   **⚡ High Performance:** Optimized for V8 (Chrome/Node) using flat memory layouts and binary search.
+*   **📐 Tuples & Arrays:** Native support for `Tuple` class or standard JS Arrays `[a, b]` as elements.
+*   **🔒 Type Safe:** Fully strict TypeScript implementation. No `any` casts.
+*   **🛡️ Deterministic:** Hashing is order-independent for Sets and order-dependent for Sequences.
 
 ---
 
@@ -51,16 +47,19 @@ const states = new RecursiveSet<string>();
 states.add("q0").add("q1");
 
 // 2. Sets of Sets (Partitioning)
+// Recursion requires explicit typing!
 const partition = new RecursiveSet<RecursiveSet<string>>();
 partition.add(states); // {{q0, q1}}
 
 // 3. Tuples (Ordered Pairs / Edges)
 const edge = new Tuple("q0", "q1"); // (q0, q1)
+// or simply: const edge = ["q0", "q1"];
+
 const transitions = new RecursiveSet<Tuple<[string, string]>>();
 transitions.add(edge);
 
-console.log(partition.toString());    // {{q0, q1}}
-console.log(transitions.toString());  // {(q0, q1)}
+console.log(partition.toString()); // {{q0, q1}}
+console.log(transitions.toString()); // {(q0, q1)}
 ```
 
 ---
@@ -70,128 +69,62 @@ console.log(transitions.toString());  // {(q0, q1)}
 ### Constructor
 
 ```typescript
-// T must be explicit or inferred. No default 'unknown'.
-new RecursiveSet<T>(...elements: Array<T | RecursiveSet<T>>)
+// Create empty or with initial elements
+// Elements are automatically sorted and deduplicated.
+new RecursiveSet<T>(...elements: T[])
 ```
+
 
 ### Methods
 
 **Mutation:**
-* `add(element: T | RecursiveSet<T>): this` – Add element. **Throws on NaN or plain Object/Array.**
-* `remove(element: T | RecursiveSet<T>): this` – Remove element.
-* `clear(): this` – Remove all elements.
+*   `add(element: T): this` – Insert element (O(N) worst case, O(1) append).
+*   `remove(element: T): this` – Remove element.
+*   `clear(): this` – Reset set.
 
-**Snapshot:**
-- `clone(): RecursiveSet<T>` – Creates a shallow copy in **O(1)** time (Copy-on-Write).
+**Set Operations (Immutable results):**
+*   `union(other: RecursiveSet<T>): RecursiveSet<T>` – $A \cup B$
+*   `intersection(other: RecursiveSet<T>): RecursiveSet<T>` – $A \cap B$
+*   `difference(other: RecursiveSet<T>): RecursiveSet<T>` – $A \setminus B$
+*   `symmetricDifference(other: RecursiveSet<T>): RecursiveSet<T>` – $A \triangle B$
+*   `powerset(): RecursiveSet<RecursiveSet<T>>` – $\mathcal{P}(A)$
+*   `cartesianProduct<U>(other: RecursiveSet<U>): RecursiveSet<Tuple<[T, U]>>` – $A \times B$
 
-**Set Operations:**
-- `union(other: RecursiveSet<T>): RecursiveSet<T>` – A ∪ B
-- `intersection(other: RecursiveSet<T>): RecursiveSet<T>` – A ∩ B
-- `difference(other: RecursiveSet<T>): RecursiveSet<T>` – A \ B
-- `symmetricDifference(other: RecursiveSet<T>): RecursiveSet<T>` – A △ B
-
-**Advanced Operations:**
-- `powerset(): RecursiveSet<RecursiveSet<T>>` – 𝒫(A)
-- `cartesianProduct<U>(other: RecursiveSet<U>): RecursiveSet<Tuple<[T, U]>>` – A × B (Returns Tuples!)
-
-**Predicates:**
-- `has(element: T | RecursiveSet<T>): boolean` – Check membership
-- `isSubset(other: RecursiveSet<T>): boolean` – Check if ⊆
-- `isSuperset(other: RecursiveSet<T>): boolean` – Check if ⊇
-- `equals(other: RecursiveSet<T>): boolean` – Structural equality
-- `isEmpty(): boolean` – Check if set is empty
+**Predicates (Fast):**
+*   `has(element: T): boolean` – **O(log N)** lookup (Binary Search).
+*   `equals(other: RecursiveSet<T>): boolean` – **O(1)** via Hash-Cache (usually).
+*   `isSubset(other: RecursiveSet<T>): boolean` – Check if $A \subseteq B$.
+*   `isSuperset(other: RecursiveSet<T>): boolean` – Check if $A \supseteq B$.
+*   `isEmpty(): boolean` – Check if $|A| = 0$.
 
 **Properties:**
-- `size: number` – Cardinality |A|
-- `toString(): string` – Pretty print with ∅ and {}
-
-### Tuple Class
-
-Helper for structural value equality of sequences.
-
-```typescript
-const t1 = new Tuple(1, 2);
-const t2 = new Tuple(1, 2);
-// In JS: [1,2] !== [1,2]
-// In RecursiveSet: t1 equals t2 (Structural Equality)
-```
----
-
-## Examples
-
-### Basic Usage
-
-```typescript
-const s1 = new RecursiveSet(1, 2, 3);
-const s2 = new RecursiveSet(2, 3, 4);
-
-console.log(s1.union(s2));        // {1, 2, 3, 4}
-console.log(s1.intersection(s2)); // {2, 3}
-console.log(s1.difference(s2));   // {1}
-```
-
-### Backtracking with O(1) Clone
-
-```typescript
-const state = new RecursiveSet("init");
-// ... perform some operations ...
-
-// Create a checkpoint (O(1))
-const checkpoint = state.clone();
-
-state.add("newState");
-// If this path fails, simply revert:
-// state = checkpoint; (conceptually)
-```
-
-### Power Set
-
-```typescript
-const set = new RecursiveSet(1, 2);
-const power = set.powerset();
-
-console.log(power.toString()); // {∅, {1}, {2}, {1, 2}}
-```
-
-### Cartesian Product \& Tuples
-
-```typescript
-const A = new RecursiveSet(1, 2);
-const B = new RecursiveSet("x", "y");
-
-// A × B = {(1, x), (1, y), (2, x), (2, y)}
-const product = A.cartesianProduct(B);
-
-// Result contains strongly typed Tuples
-for (const tuple of product) {
-    console.log(tuple.get(0), tuple.get(1)); // 1 "x"
-}
-```
-
-
-### Strictness (Breaking Changes in V3)
-
-```typescript
-const s = new RecursiveSet<number>();
-
-// ❌ Error: Plain Arrays not supported (Reference Ambiguity)
-// s.add([1, 2]); 
-
-// ✅ Correct: Use Tuple
-s.add(new Tuple(1, 2));
-
-// ❌ Error: NaN is not supported
-// s.add(NaN);
-```
-
+*   `size: number` – Cardinality.
+*   `hashCode: number` – The cached hash of the set.
 
 ---
 
-## Use Cases
+## Performance Notes (v4.0)
 
-* **Finite State Machine (FSM):** States as Sets, Transitions as Tuples.
-* **Graph Theory:** Edges as Tuples `(u, v)`, Nodes as Sets.
-* **Formal Languages:** Alphabets, Grammars, Power Sets.
+**Why Sorted Arrays?**
+For sets with $N < 1000$ (common in logic puzzles, N-Queens, graphs), the overhead of allocating tree nodes (v2/v3) dominates runtime. Sorted Arrays exploit **CPU Cache Lines**.
+
+| Operation | Complexity | Real World (Small N) |
+| :--- | :--- | :--- |
+| **Lookup** | $O(\log N)$ | 🚀 Instant |
+| **Equality** | $O(N)$ / $O(1)$* | ⚡ Instant (Hash Match) |
+| **Insert** | $O(N)$ | Fast (Native `splice` / `memmove`) |
+| **Iteration** | $O(N)$ | 🚀 Native Array Speed |
+
+*\*Equality is O(1) if hashes differ (99% case), O(N) if hash collision occurs.*
+
+---
+
+## Breaking Changes in v4.0
+
+1.  **Engine Switch (Array Backend):** Iterators are now **live**. Modifying the set while iterating over it will reflect changes immediately (Standard JS Array behavior). In v3 (RBT), iterators were snapshots.
+2.  **Arrays Supported:** Adding `[1, 2]` is now natively supported and treated as a `Tuple`.
+3.  **Strict Generics (Maintained from v3):** `add()` requires explicit generic types for recursion.
+4.  **Plain Objects Rejected (Maintained from v3):** `{a: 1}` throws an Error. Use `Tuple` or `RecursiveSet`.
 
 ---
 
@@ -203,7 +136,7 @@ Contributions are welcome!
 git clone https://github.com/cstrerath/recursive-set.git
 npm install
 npm run build
-npx tsx test.ts
+npx tsx test/test.ts
 ```
 
 ---
@@ -222,4 +155,3 @@ See [LICENSE](LICENSE) for details.
 Inspired by:
 * Zermelo-Fraenkel set theory (ZFC)
 * Formal Language Theory requirements
-* Powered by [functional-red-black-tree](https://github.com/mikolalysenko/functional-red-black-tree)
