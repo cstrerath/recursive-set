@@ -249,7 +249,6 @@ console.log();
 // ============================================================================
 console.log('--- Test 15: Freeze-on-Hash Lifecycle ---');
 
-// Klasse 1: Set leer, unhashed -> Mutable
 const lifecycleSet = new RecursiveSet<number>();
 try {
     lifecycleSet.add(1);
@@ -258,7 +257,6 @@ try {
     assert(false, "❌ FAIL: New set should be mutable");
 }
 
-// Klasse 2: Set bearbeitet, unhashed -> Mutable
 try {
     lifecycleSet.add(2);
     console.log("✅ PASS: Modified (but unhashed) set remains mutable");
@@ -266,7 +264,6 @@ try {
     assert(false, "❌ FAIL: Modified set should still be mutable");
 }
 
-// Klasse 3: Set hashed -> Throws Error (Frozen)
 const _hashTrigger = lifecycleSet.hashCode; // <--- FREEZE!
 let mutationThrew = false;
 try {
@@ -274,14 +271,12 @@ try {
 } catch (e) {
     mutationThrew = true;
     const msg = (e as Error).message;
-    // Optional: Prüfen ob die hilfreiche Message kommt
     if (msg.includes("mutableCopy")) {
          console.log("✅ PASS: Error message suggests mutableCopy()");
     }
 }
 assert(mutationThrew, "Hashed set throws on mutation (Frozen State)");
 
-// Klasse 4: Mutable Copy -> Mutable again
 const resurrectedSet = lifecycleSet.mutableCopy();
 try {
     resurrectedSet.add(3);
