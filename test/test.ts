@@ -244,6 +244,56 @@ assert(original.size === 1, "Original unmodified");
 assert(copy.size === 2, "Copy modified");
 console.log();
 
+// ============================================================================
+// 15. Freeze-on-Hash Lifecycle (Equivalence Classes)
+// ============================================================================
+console.log('--- Test 15: Freeze-on-Hash Lifecycle ---');
+
+// Klasse 1: Set leer, unhashed -> Mutable
+const lifecycleSet = new RecursiveSet<number>();
+try {
+    lifecycleSet.add(1);
+    console.log("✅ PASS: Empty/New set is mutable");
+} catch (e) {
+    assert(false, "❌ FAIL: New set should be mutable");
+}
+
+// Klasse 2: Set bearbeitet, unhashed -> Mutable
+try {
+    lifecycleSet.add(2);
+    console.log("✅ PASS: Modified (but unhashed) set remains mutable");
+} catch (e) {
+    assert(false, "❌ FAIL: Modified set should still be mutable");
+}
+
+// Klasse 3: Set hashed -> Throws Error (Frozen)
+const _hashTrigger = lifecycleSet.hashCode; // <--- FREEZE!
+let mutationThrew = false;
+try {
+    lifecycleSet.add(3);
+} catch (e) {
+    mutationThrew = true;
+    const msg = (e as Error).message;
+    // Optional: Prüfen ob die hilfreiche Message kommt
+    if (msg.includes("mutableCopy")) {
+         console.log("✅ PASS: Error message suggests mutableCopy()");
+    }
+}
+assert(mutationThrew, "Hashed set throws on mutation (Frozen State)");
+
+// Klasse 4: Mutable Copy -> Mutable again
+const resurrectedSet = lifecycleSet.mutableCopy();
+try {
+    resurrectedSet.add(3);
+    assert(resurrectedSet.has(3), "Copy contains new element");
+    assert(!lifecycleSet.has(3), "Original remains untouched");
+    console.log("✅ PASS: mutableCopy() returns a fresh, writeable instance");
+} catch (e) {
+    assert(false, "❌ FAIL: mutableCopy should return a mutable set");
+}
+
+console.log();
+
 console.log("=== Functional Tests Passed ✓ ===");
 
 console.log('\n=== RecursiveSet Performance Benchmarks ===\n');

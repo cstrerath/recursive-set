@@ -13,18 +13,18 @@
 
 A mathematical set implementation designed for **Theoretical Computer Science**, **SAT-Solvers**, and **Graph Theory**. Unlike native JavaScript `Set`, `RecursiveSet` enforces **Structural Equality** (ZFC semantics) and supports deep nesting.
 
-**v4.0.0 Update:** Now powered by **Sorted Arrays** instead of Red-Black Trees.
-*   **5x-10x Faster** than v3.0 (cache locality vs. pointer chasing).
-*   **O(1) Equality Checks** via aggressive hash caching.
-*   **Native Array Support** included.
+**v5.0.0 Update:** Now featuring **"Freeze-on-Hash"** lifecycle management.
+*   **Safety First**: Sets automatically become **immutable** (frozen) once used as a key or member of another set. No more corrupted hash codes!
+*   **High Performance**: Backed by **Sorted Arrays** and FNV-1a hashing. 5x - 10x faster than tree-based implementations for typical *N* < 1000.
+*   **O(1) Equality Checks**: Aggressive caching allows for instant comparisons of deep structures.
 
 ---
 
 ## Features
 
 *   **🔢 Strict Structural Equality:** `{1, 2}` is equal to `{2, 1}`.
+*   **❄️ Freeze-on-Hash:** Mutable during construction, immutable during usage. Prevents subtle reference bugs.
 *   **📦 Deeply Recursive:** Sets can contain Sets. Ideal for Power Sets.
-*   **⚡ High Performance:** Optimized for V8 (Chrome/Node) using flat memory layouts and binary search.
 *   **📐 Tuples & Arrays:** Native support for `Tuple` class or standard JS Arrays `[a, b]` as elements.
 *   **🔒 Type Safe:** Fully strict TypeScript implementation. No `any` casts.
 *   **🛡️ Deterministic:** Hashing is order-independent for Sets and order-dependent for Sequences.
@@ -39,27 +39,50 @@ npm install recursive-set
 
 ---
 ## Quickstart
+
+### 1. Basic Usage
 ```typescript
 import { RecursiveSet, Tuple } from "recursive-set";
 
-// 1. Sets of primitives
+// Sets of primitives
 const states = new RecursiveSet<string>();
 states.add("q0").add("q1");
 
-// 2. Sets of Sets (Partitioning)
-// Recursion requires explicit typing!
+// Sets of Sets (Partitioning)
 const partition = new RecursiveSet<RecursiveSet<string>>();
 partition.add(states); // {{q0, q1}}
 
-// 3. Tuples (Ordered Pairs / Edges)
-const edge = new Tuple("q0", "q1"); // (q0, q1)
+// Tuples (Ordered Pairs / Edges)
+const edge = new Tuple("q0", "q1"); 
 // or simply: const edge = ["q0", "q1"];
 
 const transitions = new RecursiveSet<Tuple<[string, string]>>();
 transitions.add(edge);
 
 console.log(partition.toString()); // {{q0, q1}}
-console.log(transitions.toString()); // {(q0, q1)}
+```
+
+### 2. The Lifecycle (Mutable -> Frozen)
+
+**New in v5:** To ensure mathematical correctness, a set cannot be modified once it has been hashed (e.g., added to another set).
+
+```typescript
+const A = new RecursiveSet(1, 2);
+const B = new RecursiveSet(A); 
+// B hashes A to store it. 
+// A is now FROZEN to ensure B's integrity.
+
+console.log(B.has(A)); // true
+
+try {
+    A.add(3); // 💥 Throws Error: Cannot add() to a frozen RecursiveSet
+} catch (e) {
+    console.log("A is immutable now!");
+}
+
+// Fix: Create a mutable copy ("Forking")
+const C = A.mutableCopy();
+C.add(3); // Works!
 ```
 
 ---
@@ -76,6 +99,10 @@ new RecursiveSet<T>(...elements: T[])
 
 
 ### Methods
+
+**Lifecycle Management:**
+*   `mutableCopy(): RecursiveSet<T>` – Creates a fresh, mutable clone of the set (O(N)). Use this if you need to modify a frozen set.
+*   `clone(): RecursiveSet<T>` – Alias for mutableCopy.
 
 **Mutation:**
 *   `add(element: T): this` – Insert element (O(N) worst case, O(1) append).
@@ -99,11 +126,12 @@ new RecursiveSet<T>(...elements: T[])
 
 **Properties:**
 *   `size: number` – Cardinality.
-*   `hashCode: number` – The cached hash of the set.
+*   `hashCode: number` – The cached hash. Accessing this property freezes the set.
+*   `isFrozen: boolean` – Check if the set is read-only.
 
 ---
 
-## Performance Notes (v4.0)
+## Performance Notes
 
 **Why Sorted Arrays?**
 For sets with $N < 1000$ (common in logic puzzles, N-Queens, graphs), the overhead of allocating tree nodes (v2/v3) dominates runtime. Sorted Arrays exploit **CPU Cache Lines**.
@@ -119,12 +147,12 @@ For sets with $N < 1000$ (common in logic puzzles, N-Queens, graphs), the overhe
 
 ---
 
-## Breaking Changes in v4.0
+## Breaking Changes in v5.0
 
-1.  **Engine Switch (Array Backend):** Iterators are now **live**. Modifying the set while iterating over it will reflect changes immediately (Standard JS Array behavior). In v3 (RBT), iterators were snapshots.
-2.  **Arrays Supported:** Adding `[1, 2]` is now natively supported and treated as a `Tuple`.
-3.  **Strict Generics (Maintained from v3):** `add()` requires explicit generic types for recursion.
-4.  **Plain Objects Rejected (Maintained from v3):** `{a: 1}` throws an Error. Use `Tuple` or `RecursiveSet`.
+1.  **Freeze-on-Hash Semantics:** To guarantee mathematical correctness, sets now transition to an **immutable state** once their `hashCode` is computed (which happens automatically when added to another `RecursiveSet` or used as a Map key).
+    *   *Old Behavior:* Modifying a hashed set was possible but resulted in corrupted hash codes and lookup failures.
+    *   *New Behavior:* Calling `add()`, `remove()` or `clear()` on a hashed set throws an `Error`.
+    *   *Migration:* Use `mutableCopy()` to create a modifiable clone if you need to evolve a state that has already been stored.
 
 ---
 
@@ -137,6 +165,7 @@ git clone https://github.com/cstrerath/recursive-set.git
 npm install
 npm run build
 npx tsx test/test.ts
+npx tsx test/nqueens.ts
 ```
 
 ---
