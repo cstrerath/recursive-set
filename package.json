@@ -1,6 +1,6 @@
 {
   "name": "recursive-set",
-  "version": "5.0.3",
+  "version": "6.0.0",
   "description": "Mutable recursive sets with ZFC axioms for TypeScript. High-Performance Array Backend.",
   "main": "./dist/cjs/index.js",
   "types": "./dist/esm/index.d.ts",
