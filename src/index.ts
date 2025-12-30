@@ -1,53 +1,78 @@
 /**
  * @module recursive-set
  * High-Performance Recursive Set with "Freeze-on-Hash" semantics.
+ * Version: 6.0.0
  */
 
-// === HASHING ENGINE (FNV-1a) ===
+// ============================================================================
+// HASHING ENGINE (FNV-1a with DataView & Safe Integer Split)
+// ============================================================================
 
 const FNV_PRIME = 16777619;
 const FNV_OFFSET = 2166136261;
 
+// Shared buffer to avoid allocation overhead (reused for all number hashing)
 const floatBuffer = new ArrayBuffer(8);
-const floatView = new Float64Array(floatBuffer);
-const intView = new Int32Array(floatBuffer);
+const view = new DataView(floatBuffer);
 
+/**
+ * Hashes a number using FNV-1a.
+ * Handles both safe integers (via high/low split) and floats (via IEEE 754 bits).
+ * Ensures platform consistency by enforcing Little Endian byte order.
+ */
 function hashNumber(val: number): number {
-    if (Number.isInteger(val)) {
+    // Integer Path: Handle Safe Integers correctly (up to 2^53)
+    if (Number.isSafeInteger(val)) {
         let h = FNV_OFFSET;
-        h ^= val;
+        
+        const lowU = val >>> 0;
+        const high = ((val - lowU) / 4294967296) | 0;
+
+        h ^= lowU;
         h = Math.imul(h, FNV_PRIME);
+        
+        h ^= high;
+        h = Math.imul(h, FNV_PRIME);
+        
         return h >>> 0;
     }
 
-    floatView[0] = val;
-    let h = FNV_OFFSET;
+    // Float Path: IEEE 754 Bit Pattern (Little Endian Enforced)
+    view.setFloat64(0, val, true); 
     
-    h ^= intView[0];
+    let h = FNV_OFFSET;
+    const low = view.getInt32(0, true);
+    const high = view.getInt32(4, true);
+
+    h ^= low;
     h = Math.imul(h, FNV_PRIME);
-    h ^= intView[1];
+    h ^= high;
     h = Math.imul(h, FNV_PRIME);
     
     return h >>> 0;
 }
 
 function hashString(str: string): number {
-    let hash = FNV_OFFSET;
+    let h = FNV_OFFSET;
     const len = str.length;
     for (let i = 0; i < len; i++) {
-        hash ^= str.charCodeAt(i);
-        hash = Math.imul(hash, FNV_PRIME);
+        h ^= str.charCodeAt(i);
+        h = Math.imul(h, FNV_PRIME);
     }
-    return hash >>> 0;
+    return h >>> 0;
 }
 
+/**
+ * Computes a 32-bit hash code for a supported value.
+ * @param val The value to hash (number, string, Tuple, RecursiveSet, or Array)
+ */
 function hashValue(val: unknown): number {
     if (typeof val === 'string') return hashString(val);
     if (typeof val === 'number') return hashNumber(val);
     
-    // Fast Path: Objects with cached hash
-    if (val && typeof val === 'object' && 'hashCode' in val) {
-        return (val as any).hashCode;
+    // Strict Fast-Path: Only trust our own Primitives
+    if (val instanceof RecursiveSet || val instanceof Tuple) {
+        return val.hashCode;
     }
     
     if (Array.isArray(val)) {
@@ -62,100 +87,174 @@ function hashValue(val: unknown): number {
     return 0;
 }
 
-// === COMPARATOR ===
+// ============================================================================
+// STRICT COMPARATOR (Total Order)
+// ============================================================================
 
+/**
+ * Determines the sort priority of a type.
+ * Order: number (1) < string (2) < Sequence (3) < Set (4)
+ */
+function getTypeScore(a: unknown): number {
+    if (typeof a === 'number') return 1;
+    if (typeof a === 'string') return 2;
+    if (Array.isArray(a) || a instanceof Tuple) return 3; 
+    if (a instanceof RecursiveSet) return 4;
+    return 0; 
+}
+
+/**
+ * Compares two values for sorting.
+ * Implements a strict total order:
+ * 1. Semantic Type Score (Number < String < Seq < Set)
+ * 2. Hash Code (Short-Circuit)
+ * 3. Deep Structural Comparison
+ */
 function compare(a: unknown, b: unknown): number {
     if (a === b) return 0;
 
-    // 1. Hash Short-Circuit (Optimization)
-    const aH = (a as { hashCode?: number })?.hashCode;
-    const bH = (b as { hashCode?: number })?.hashCode;
+    // 1. Semantic Grouping
+    const scoreA = getTypeScore(a);
+    const scoreB = getTypeScore(b);
     
-    const ha = (aH !== undefined) ? aH : hashValue(a);
-    const hb = (bH !== undefined) ? bH : hashValue(b);
+    if (scoreA !== scoreB) {
+        return scoreA < scoreB ? -1 : 1;
+    }
+
+    // 2. PRIMITIVES: Value Sort (Human readable & Fast)
+    if (scoreA === 1) return (a as number) < (b as number) ? -1 : 1;
+    if (scoreA === 2) return (a as string) < (b as string) ? -1 : 1;
+
+    // 3. OBJECTS: Hash Optimization (Performance Protection)
+    const ha = hashValue(a);
+    const hb = hashValue(b);
     
     if (ha !== hb) return ha < hb ? -1 : 1;
 
-    // 2. Structural Type Check
-    const typeA = typeof a;
-    const typeB = typeof b;
-
-    if (typeA === 'string' && typeB === 'string') return (a as string) < (b as string) ? -1 : 1;
-    if (typeA === 'number' && typeB === 'number') return (a as number) < (b as number) ? -1 : 1;
-
-    const isSetA = a instanceof RecursiveSet;
-    const isSetB = b instanceof RecursiveSet;
-    
-    if (isSetA && isSetB) {
+    // 3. Fallback / Structural Comparison
+    if (scoreA === 4) {
         return (a as RecursiveSet<unknown>).compare(b as RecursiveSet<unknown>);
     }
 
-    const isSeqA = Array.isArray(a) || a instanceof Tuple;
-    const isSeqB = Array.isArray(b) || b instanceof Tuple;
-
-    // Sort Order: Primitives (0) < Sequences (1) < Sets (2)
-    if (isSetA !== isSetB || isSeqA !== isSeqB) {
-         const scoreA = isSetA ? 2 : isSeqA ? 1 : 0;
-         const scoreB = isSetB ? 2 : isSeqB ? 1 : 0;
-         return scoreA - scoreB;
-    }
-
-    // 3. Sequence Comparison
-    if (isSeqA && isSeqB) {
-        const valA = (a instanceof Tuple) ? a.values : (a as unknown[]);
-        const valB = (b instanceof Tuple) ? b.values : (b as unknown[]);
-        
-        const len = valA.length;
-        if (len !== valB.length) return len - valB.length;
-        
-        for (let i = 0; i < len; i++) {
-            const diff = compare(valA[i], valB[i]);
-            if (diff !== 0) return diff;
-        }
-        return 0;
-    }
-
-    return (a as number) < (b as number) ? -1 : 1;
-}
-
-// === CLASSES ===
-
-export class Tuple<T extends unknown[]> {
-    readonly values: T;
-    readonly hashCode: number;
-
-    constructor(...values: T) {
-        this.values = values;
-        this.hashCode = hashValue(values);
+    // Sequence Comparison (Arrays & Tuples)
+    const valA = (a instanceof Tuple) ? a.values : (a as unknown[]);
+    const valB = (b instanceof Tuple) ? b.values : (b as unknown[]);
+    
+    const len = valA.length;
+    if (len !== valB.length) return len - valB.length;
+    
+    for (let i = 0; i < len; i++) {
+        const diff = compare(valA[i], valB[i]);
+        if (diff !== 0) return diff;
     }
     
-    get length() { return this.values.length; }
-    get(i: number) { return this.values[i]; }
-    *[Symbol.iterator]() { yield* this.values; }
-    toString() { return `(${this.values.join(', ')})`; }
+    return 0;
+}
+
+// ============================================================================
+// VALIDATION
+// ============================================================================
+
+/**
+ * Validates that an element is of a supported immutable-compatible type.
+ * Throws if the type is mutable (plain object) or unsupported (function, symbol).
+ * @throws {Error} if element type is invalid.
+ */
+function validateType(element: unknown) {
+    if (typeof element === 'number') {
+        if (Number.isNaN(element)) throw new Error("NaN is not supported");
+        return;
+    }
+    if (typeof element === 'string') return;
+    
+    if (Array.isArray(element)) {
+        for (const item of element) validateType(item);
+        return;
+    }
+
+    if (typeof element === 'object' && element !== null) {
+        if (element instanceof RecursiveSet || element instanceof Tuple) {
+            return;
+        }
+    }
+    throw new Error("Unsupported Type: Use number, string, Tuple, Array or RecursiveSet.");
+}
+
+// ============================================================================
+// CLASSES
+// ============================================================================
+
+/**
+ * Immutable Tuple container.
+ * * Guarantees structural immutability by freezing the internal array storage.
+ * Note: Immutability is shallow. If you store mutable Arrays inside a Tuple,
+ * the Tuple logic remains correct, but the content inside the Array might change.
+ * For strict value semantics, use Tuple<Primitive | RecursiveSet | Tuple>.
+ * * @template T The tuple type.
+ */
+export class Tuple<T extends unknown[]> {
+    #values: T;
+    readonly hashCode: number;
+
+    /**
+     * Creates a new Tuple.
+     * @param values Elements of the tuple.
+     */
+    constructor(...values: T) {
+        for (const v of values) validateType(v);
+        this.#values = [...values] as T; 
+        Object.freeze(this.#values);
+        this.hashCode = hashValue(this.#values);
+    }
+    
+    /** Returns the read-only backing array. */
+    get values(): T { return this.#values; }
+    
+    get length(): number { return this.#values.length; }
+    
+    get(i: number): T[number] { return this.#values[i]; }
+    
+    *[Symbol.iterator](): Iterator<T[number]> { yield* this.#values; }
+    
+    toString(): string { return `(${this.#values.join(', ')})`; }
+    
     [Symbol.for('nodejs.util.inspect.custom')]() { return this.toString(); }
 }
 
+/**
+ * A mathematical Set with Value Semantics.
+ * * Features:
+ * - **Strict Typing:** Supports number, string, Tuple, Array, RecursiveSet.
+ * - **Sorted Storage:** Elements are internally sorted for O(1) equality checks via hash.
+ * - **Freeze-on-Hash:** Once the hash code is accessed (e.g. when added to another Set),
+ * this Set becomes immutable to prevent hash corruption.
+ * * @template T The type of elements in the set.
+ */
 export class RecursiveSet<T> {
-    public _elements: T[];
-    private _hashCode: number | null = null;
-    private _isFrozen: boolean = false;
+    #elements: T[] = [];
+    #hashCode: number | null = null;
+    #isFrozen: boolean = false;
 
+    /**
+     * Exposes the static compare function used internally.
+     */
     static compare(a: unknown, b: unknown): number { return compare(a, b); }
 
+    /**
+     * Creates a new RecursiveSet.
+     * @param elements Initial elements (will be sorted and deduplicated).
+     */
     constructor(...elements: T[]) {
-        if (elements.length === 0) {
-            this._elements = [];
-            this._hashCode = 0;
-        } else {
-            this._elements = elements;
-            this._elements.sort(compare);
-            this._unique();
+        if (elements.length > 0) {
+            for (const el of elements) validateType(el);
+            this.#elements = elements;
+            this.#elements.sort(compare);
+            this.#unique();
         }
     }
 
-    private _checkFrozen(op: string) {
-        if (this._isFrozen) {
+    #checkFrozen(op: string) {
+        if (this.#isFrozen) {
             throw new Error(
                 `InvalidOperation: Cannot ${op} a frozen RecursiveSet.\n` +
                 `This Set has been hashed or used in a collection (Value Semantics).\n` +
@@ -164,8 +263,8 @@ export class RecursiveSet<T> {
         }
     }
     
-    private _unique() {
-        const arr = this._elements;
+    #unique() {
+        const arr = this.#elements;
         const len = arr.length;
         if (len < 2) return;
         
@@ -179,24 +278,30 @@ export class RecursiveSet<T> {
     }
 
     /**
-     * Calculates/Caches hash code and FREEZES the set.
+     * Calculates and caches the hash code.
+     * Freezes the set to ensure the hash remains valid.
      */
     get hashCode(): number {
-        if (this._hashCode !== null) return this._hashCode;
+        if (this.#hashCode !== null) return this.#hashCode;
         
         let h = 0;
-        const arr = this._elements;
+        const arr = this.#elements;
         const len = arr.length;
         for (let i = 0; i < len; i++) {
-             h = Math.imul(31, h) + hashValue(arr[i]);
+             // Wrap to 32-bit at each step for consistency
+             h = (Math.imul(31, h) + hashValue(arr[i])) | 0;
         }
-        this._hashCode = h | 0;
-        this._isFrozen = true;
-        return this._hashCode;
+        this.#hashCode = h | 0;
+        this.#isFrozen = true;
+        return this.#hashCode;
     }
     
-    get isFrozen(): boolean { return this._isFrozen; }
+    /** Returns true if the set is frozen (hashed). */
+    get isFrozen(): boolean { return this.#isFrozen; }
 
+    /**
+     * Compares this set with another for sorting.
+     */
     compare(other: RecursiveSet<T>): number {
         if (this === other) return 0;
         
@@ -204,8 +309,8 @@ export class RecursiveSet<T> {
         const h2 = other.hashCode;
         if (h1 !== h2) return h1 < h2 ? -1 : 1;
 
-        const arrA = this._elements;
-        const arrB = other._elements;
+        const arrA = this.#elements;
+        const arrB = other.#elements;
         const len = arrA.length;
         
         if (len !== arrB.length) return len - arrB.length;
@@ -217,14 +322,17 @@ export class RecursiveSet<T> {
         return 0;
     }
 
-    get size(): number { return this._elements.length; }
-    isEmpty(): boolean { return this._elements.length === 0; }
+    get size(): number { return this.#elements.length; }
+    isEmpty(): boolean { return this.#elements.length === 0; }
 
+    /**
+     * Checks if the set contains the given element.
+     * Uses binary search for sets > 16 elements.
+     */
     has(element: T): boolean {
-        const arr = this._elements;
+        const arr = this.#elements;
         const len = arr.length;
         
-        // Linear Scan (Prefetch-friendly for small sets)
         if (len < 16) {
             for (let i = 0; i < len; i++) {
                 if (compare(arr[i], element) === 0) return true;
@@ -232,7 +340,6 @@ export class RecursiveSet<T> {
             return false;
         }
 
-        // Binary Search
         let low = 0, high = len - 1;
         while (low <= high) {
             const mid = (low + high) >>> 1;
@@ -244,52 +351,48 @@ export class RecursiveSet<T> {
         return false;
     }
 
+    /**
+     * Adds an element to the set.
+     * Throws if the set is frozen.
+     */
     add(element: T): this {
-        this._checkFrozen('add() to');
+        this.#checkFrozen('add() to');
+        validateType(element); 
 
-        // Validation (Inlined for Performance)
-        if (typeof element === 'object' && element !== null) {
-            if (!(element instanceof RecursiveSet || element instanceof Tuple || Array.isArray(element))) {
-                throw new Error("Unsupported Type: Use Tuple, Array or RecursiveSet.");
-            }
-        } else if (Number.isNaN(element)) {
-            throw new Error("NaN is not supported");
-        }
-
-        const arr = this._elements;
+        const arr = this.#elements;
         const len = arr.length;
 
-        // Optimization: Append to end (common in construction)
+        // Optimization: Append to end (common pattern)
         if (len > 0) {
             const lastCmp = compare(arr[len-1], element);
             if (lastCmp < 0) {
                 arr.push(element);
-                this._hashCode = null;
+                this.#hashCode = null;
                 return this;
             }
             if (lastCmp === 0) return this;
         } else {
             arr.push(element);
-            this._hashCode = null;
+            this.#hashCode = null;
             return this;
         }
 
-        // Small Array Strategy
+        // Small Array: Linear Insert
         if (len < 16) {
             for (let i = 0; i < len; i++) {
                 const cmp = compare(arr[i], element);
                 if (cmp === 0) return this;
                 if (cmp > 0) {
                     arr.splice(i, 0, element);
-                    this._hashCode = null;
+                    this.#hashCode = null;
                     return this;
                 }
             }
-            arr.push(element); // Should be unreachable given append check, but safe fallback
+            arr.push(element); 
             return this;
         }
 
-        // Large Array Strategy
+        // Large Array: Binary Search Insert
         let low = 0, high = len - 1, idx = 0;
         while (low <= high) {
             const mid = (low + high) >>> 1;
@@ -304,21 +407,25 @@ export class RecursiveSet<T> {
             }
         }
         arr.splice(idx, 0, element);
-        this._hashCode = null;
+        this.#hashCode = null;
         return this;
     }
 
+    /**
+     * Removes an element from the set.
+     * Throws if the set is frozen.
+     */
     remove(element: T): this {
-        this._checkFrozen('remove() from');
+        this.#checkFrozen('remove() from');
         
-        const arr = this._elements;
+        const arr = this.#elements;
         const len = arr.length;
 
         if (len < 16) {
             for (let i = 0; i < len; i++) {
                 if (compare(arr[i], element) === 0) {
                     arr.splice(i, 1);
-                    this._hashCode = null;
+                    this.#hashCode = null;
                     return this;
                 }
             }
@@ -331,7 +438,7 @@ export class RecursiveSet<T> {
             const cmp = compare(arr[mid], element);
             if (cmp === 0) {
                 arr.splice(mid, 1);
-                this._hashCode = null;
+                this.#hashCode = null;
                 return this;
             }
             if (cmp < 0) low = mid + 1;
@@ -341,15 +448,19 @@ export class RecursiveSet<T> {
     }
 
     clear(): this {
-        this._checkFrozen('clear()');
-        this._elements = [];
-        this._hashCode = 0;
+        this.#checkFrozen('clear()');
+        this.#elements = [];
+        this.#hashCode = 0;
         return this;
     }
     
+    /**
+     * Creates a mutable shallow copy of this set.
+     * Useful for modifying a set after it has been frozen.
+     */
     mutableCopy(): RecursiveSet<T> {
         const s = new RecursiveSet<T>();
-        s._elements = this._elements.slice(); 
+        s.#elements = this.#elements.slice(); 
         return s;
     }
     
@@ -357,8 +468,8 @@ export class RecursiveSet<T> {
 
     union(other: RecursiveSet<T>): RecursiveSet<T> {
         const s = new RecursiveSet<T>();
-        const arrA = this._elements;
-        const arrB = other._elements;
+        const arrA = this.#elements;
+        const arrB = other.#elements;
         
         if (arrA.length === 0) return other.clone();
         if (arrB.length === 0) return this.clone();
@@ -376,14 +487,14 @@ export class RecursiveSet<T> {
         while (i < lenA) res.push(arrA[i++]);
         while (j < lenB) res.push(arrB[j++]);
         
-        s._elements = res;
+        s.#elements = res;
         return s;
     }
 
     intersection(other: RecursiveSet<T>): RecursiveSet<T> {
         const s = new RecursiveSet<T>();
-        const arrA = this._elements;
-        const arrB = other._elements;
+        const arrA = this.#elements;
+        const arrB = other.#elements;
         const res: T[] = [];
         let i = 0, j = 0;
         const lenA = arrA.length, lenB = arrB.length;
@@ -394,14 +505,14 @@ export class RecursiveSet<T> {
             else if (cmp > 0) j++;
             else { res.push(arrA[i++]); j++; }
         }
-        s._elements = res;
+        s.#elements = res;
         return s;
     }
 
     difference(other: RecursiveSet<T>): RecursiveSet<T> {
         const s = new RecursiveSet<T>();
-        const arrA = this._elements;
-        const arrB = other._elements;
+        const arrA = this.#elements;
+        const arrB = other.#elements;
         const res: T[] = [];
         let i = 0, j = 0;
         const lenA = arrA.length, lenB = arrB.length;
@@ -413,14 +524,14 @@ export class RecursiveSet<T> {
             else { i++; j++; }
         }
         while (i < lenA) res.push(arrA[i++]);
-        s._elements = res;
+        s.#elements = res;
         return s;
     }
 
     symmetricDifference(other: RecursiveSet<T>): RecursiveSet<T> {
         const s = new RecursiveSet<T>();
-        const arrA = this._elements;
-        const arrB = other._elements;
+        const arrA = this.#elements;
+        const arrB = other.#elements;
         const res: T[] = [];
         let i = 0, j = 0;
         const lenA = arrA.length, lenB = arrB.length;
@@ -433,7 +544,7 @@ export class RecursiveSet<T> {
         }
         while (i < lenA) res.push(arrA[i++]);
         while (j < lenB) res.push(arrB[j++]);
-        s._elements = res;
+        s.#elements = res;
         return s;
     }
 
@@ -446,7 +557,7 @@ export class RecursiveSet<T> {
         for (let i = 0; i < max; i++) {
             const subset = new RecursiveSet<T>();
             for (let j = 0; j < n; j++) {
-                if (i & (1 << j)) subset._elements.push(this._elements[j]);
+                if (i & (1 << j)) subset.#elements.push(this.#elements[j]);
             }
             subsets.push(subset);
         }
@@ -455,21 +566,25 @@ export class RecursiveSet<T> {
 
     cartesianProduct<U>(other: RecursiveSet<U>): RecursiveSet<Tuple<[T, U]>> {
         const result = new RecursiveSet<Tuple<[T, U]>>();
-        const arrA = this._elements;
-        const arrB = other._elements;
+        const arrA = this.#elements;
+        const arrB = other.#elements;
         
         for (const x of arrA) {
             for (const y of arrB) {
-                result._elements.push(new Tuple(x, y));
+                result.#elements.push(new Tuple(x, y));
             }
         }
+        // Hash ordering is not monotonic, so we must resort
+        result.#elements.sort(compare);
+        result.#unique();
+        
         return result;
     }
 
     isSubset(other: RecursiveSet<T>): boolean {
         if (this.size > other.size) return false;
         let i = 0, j = 0;
-        const arrA = this._elements, arrB = other._elements;
+        const arrA = this.#elements, arrB = other.#elements;
         while (i < arrA.length && j < arrB.length) {
             const cmp = compare(arrA[i], arrB[j]);
             if (cmp < 0) return false;
@@ -482,12 +597,13 @@ export class RecursiveSet<T> {
     isSuperset(other: RecursiveSet<T>): boolean { return other.isSubset(this); }
     isProperSubset(other: RecursiveSet<T>): boolean { return this.isSubset(other) && this.size < other.size; }
     equals(other: RecursiveSet<T>): boolean { return this.compare(other) === 0; }
-    toSet(): Set<T> { return new Set(this._elements); }
-    *[Symbol.iterator](): Iterator<T> { yield* this._elements; }
+    
+    toSet(): Set<T> { return new Set(this.#elements); }
+    *[Symbol.iterator](): Iterator<T> { yield* this.#elements; }
 
     toString(): string {
         if (this.isEmpty()) return "∅";
-        const elementsStr = this._elements.map(el => {
+        const elementsStr = this.#elements.map(el => {
             if (Array.isArray(el)) return `[${el.join(', ')}]`;
             return String(el);
         });
@@ -496,6 +612,10 @@ export class RecursiveSet<T> {
     
     [Symbol.for('nodejs.util.inspect.custom')]() { return this.toString(); }
 }
+
+// ============================================================================
+// EXPORTS
+// ============================================================================
 
 export function emptySet<T>(): RecursiveSet<T> { return new RecursiveSet<T>(); }
 export function singleton<T>(element: T): RecursiveSet<T> { return new RecursiveSet<T>(element); }

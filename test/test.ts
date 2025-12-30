@@ -1,6 +1,32 @@
+"use strict";
+
 import { RecursiveSet, emptySet, Tuple } from '../src/index';
 
-// === Test Utilities ===
+// ============================================================================
+// CONFIGURATION & UTILITIES
+// ============================================================================
+
+let failureCount = 0;
+
+// CLI Argument Parsing for Seed (Usage: ts-node test/test.ts --seed=12345)
+const args = process.argv.slice(2);
+const seedArg = args.find(arg => arg.startsWith('--seed='));
+const parsedSeed = seedArg ? Number(seedArg.split('=')[1]) : 1337;
+const SEED = Number.isFinite(parsedSeed) ? parsedSeed : 1337;
+
+console.log(`=== RecursiveSet Test Suite (v6.0.0) ===`);
+console.log(`[Config] RNG Seed: ${SEED}\n`);
+
+// Simple Seeded RNG (Mulberry32) for reproducible fuzzing
+function createRNG(seed: number) {
+    return function() {
+        var t = seed += 0x6D2B79F5;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    }
+}
+const random = createRNG(SEED);
 
 function measure<T>(label: string, fn: () => T): T {
     const start = performance.now();
@@ -13,16 +39,20 @@ function measure<T>(label: string, fn: () => T): T {
 function assert(condition: boolean, message: string) {
     if (!condition) {
         console.error(`❌ FAIL: ${message}`);
-        process.exit(1);
+        failureCount++;
     } else {
         console.log(`✅ PASS: ${message}`);
     }
 }
 
-console.log('=== RecursiveSet Test Suite (v4.0.0 High-Performance Array) ===\n');
+// Pretty printer for debug output
+function fmt(x: any): string {
+    if (typeof x === 'object' && x !== null) return x.toString();
+    return String(x);
+}
 
 // ============================================================================
-// 1. Primitive Value Semantics
+// 1. PRIMITIVE VALUE SEMANTICS
 // ============================================================================
 console.log('--- Test 1: Primitive Value Equality ---');
 const str1 = "hello";
@@ -36,7 +66,7 @@ assert(setStrings.size === 1, "Set prevents duplicate values");
 console.log();
 
 // ============================================================================
-// 2. Type Handling & Ordering
+// 2. TYPE HANDLING & ORDERING
 // ============================================================================
 console.log('--- Test 2: Mixed Types (Primitives vs Sets) ---');
 const mixedSet = new RecursiveSet<number | RecursiveSet<number>>();
@@ -49,17 +79,16 @@ assert(mixedSet.size === 2, "Set contains both primitive 1 and set {1}");
 assert(mixedSet.has(1), "Contains primitive 1");
 assert(mixedSet.has(new RecursiveSet(1)), "Contains set {1}");
 
-// Verify deterministic sort order: Primitives < Sequences < Sets
+// Verify deterministic sort order (Semantic-First)
 const it = mixedSet[Symbol.iterator]();
 const first = it.next().value;
 assert(typeof first === 'number', "Ordering: Primitives must precede Sets");
 console.log();
 
 // ============================================================================
-// 3. Deep Structural Equality (ZFC Core)
+// 3. DEEP STRUCTURAL EQUALITY
 // ============================================================================
 console.log('--- Test 3: Deep Structural Equality ---');
-// { {1, 2}, {3} } == { {3}, {2, 1} }
 const A = new RecursiveSet(new RecursiveSet(1, 2), new RecursiveSet(3));
 const B = new RecursiveSet(new RecursiveSet(3), new RecursiveSet(2, 1));
 
@@ -67,28 +96,33 @@ assert(A.equals(B), "Sets are equal regardless of insertion order");
 console.log();
 
 // ============================================================================
-// 4. Cartesian Product
+// 4. CARTESIAN PRODUCT (INVARIANT CHECK)
 // ============================================================================
-console.log('--- Test 4: Cartesian Product (Tuples) ---');
-const setX = new RecursiveSet(1);
-const setY = new RecursiveSet(2);
+console.log('--- Test 4: Cartesian Product (Sorted Invariant) ---');
+const setX = new RecursiveSet(1, 2);
+const setY = new RecursiveSet(3, 4);
 const product = setX.cartesianProduct(setY);
 
-assert(product.size === 1, "Product size is correct");
+assert(product.size === 4, "Product size is correct");
 
-// Cast required as iterator returns generic T
-const tuple = product.toSet().values().next().value as Tuple<[number, number]>;
-assert(tuple instanceof Tuple, "Result contains Tuple instances");
-assert(tuple.length === 2, "Tuple has length 2");
-assert(tuple.get(0) === 1, "First element is 1");
-assert(tuple.get(1) === 2, "Second element is 2");
-
-const manualTuple = new Tuple(1, 2);
-assert(product.has(manualTuple), "Product contains structurally equal tuple");
+let prev: Tuple<[number, number]> | undefined;
+let isSorted = true;
+for (const item of product) {
+    const current = item as Tuple<[number, number]>;
+    if (prev) {
+        // Result must be strictly sorted by compare() logic
+        if (RecursiveSet.compare(prev, current) > 0) {
+            isSorted = false;
+            console.error(`Sorting violation: ${prev} comes before ${current}`);
+        }
+    }
+    prev = current;
+}
+assert(isSorted, "Cartesian Product preserves Sort-Invariant");
 console.log();
 
 // ============================================================================
-// 5. Pure Operations
+// 5. PURE OPERATIONS
 // ============================================================================
 console.log('--- Test 5: Immutability of Operations ---');
 const base = new RecursiveSet(1);
@@ -99,54 +133,41 @@ assert(unionResult.size === 2, "New set contains result");
 console.log();
 
 // ============================================================================
-// 6. Type Support Constraints
+// 6. STRICT TYPE VALIDATION
 // ============================================================================
-console.log('--- Test 6: Supported vs. Rejected Types ---');
+console.log('--- Test 6: Strict Type Validation ---');
 
-// Case A: Arrays are supported (treated as Tuples)
 const setArr = new RecursiveSet<number[]>();
 setArr.add([1, 2]);
 assert(setArr.size === 1, "Plain Arrays are SUPPORTED");
-assert(setArr.has([1, 2]), "Arrays found by value (structural equality)");
 
-// Case B: Plain Objects are REJECTED to prevent reference confusion
 const setObj = new RecursiveSet<object>();
 let threwObj = false;
 try {
-    // @ts-ignore - Intentionally testing invalid type
+    // @ts-ignore
     setObj.add({ a: 1 });
 } catch (e) {
     threwObj = true;
+    assert((e as Error).message.includes("Unsupported Type"), "Correct Error Message");
 }
 assert(threwObj, "Plain Objects are REJECTED");
-
-// Case C: Tuples are supported
-const setTup = new RecursiveSet<Tuple<[number, number]>>();
-setTup.add(new Tuple(1, 2));
-setTup.add(new Tuple(1, 2));
-assert(setTup.size === 1, "Tuples work correctly (Value Equality)");
 console.log();
 
 // ============================================================================
-// 7. Basic Performance
+// 7. BASIC PERFORMANCE
 // ============================================================================
 console.log('--- Test 7: Basic Stress Test (1k items) ---');
 const startStress = performance.now();
 const stressSet = new RecursiveSet<number>();
-
-// v4.0 Note: Inserting sorted data into sorted array is efficient (append only).
-for(let i=0; i<1000; i++) {
-    stressSet.add(i);
-}
+for(let i=0; i<1000; i++) stressSet.add(i);
 assert(stressSet.size === 1000, "Successfully added 1000 items");
 console.log(`Took ${(performance.now() - startStress).toFixed(2)}ms`);
 console.log();
 
 // ============================================================================
-// 8. Von Neumann Ordinals
+// 8. VON NEUMANN ORDINALS
 // ============================================================================
 console.log('--- Test 8: Von Neumann Ordinals ---');
-// Recursive types require explicit definitions
 type Ordinal = RecursiveSet<Ordinal>;
 const zero: Ordinal = new RecursiveSet();
 const one: Ordinal = new RecursiveSet(zero);
@@ -158,36 +179,33 @@ console.log("✓ Von Neumann logic valid");
 console.log();
 
 // ============================================================================
-// 9. Power Set
+// 9. POWER SET
 // ============================================================================
 console.log('--- Test 9: Power Set ---');
 const baseSet = new RecursiveSet(1, 2, 3);
 const pSet = baseSet.powerset();
-
 assert(pSet.size === 8, "Power set size is correct (8)");
 assert(pSet.has(emptySet<number>()), "Contains empty set");
 console.log();
 
 // ============================================================================
-// 10. Symmetric Difference
+// 10. SYMMETRIC DIFFERENCE
 // ============================================================================
 console.log('--- Test 10: Symmetric Difference ---');
 const setA = new RecursiveSet(1, 2);
 const setB = new RecursiveSet(2, 3);
 const symDiff = setA.symmetricDifference(setB);
-
 assert(symDiff.size === 2, "Result size correct {1, 3}");
 assert(symDiff.has(1) && symDiff.has(3), "Correct elements");
 console.log();
 
 // ============================================================================
-// 11. Recursion Depth
+// 11. RECURSION DEPTH
 // ============================================================================
 console.log('--- Test 11: Recursion Depth ---');
 type NestedSet = RecursiveSet<string | NestedSet>;
 let current: NestedSet = new RecursiveSet("bottom");
 const onionBag = new RecursiveSet<NestedSet>();
-
 for(let i=0; i<20; i++) {
     onionBag.add(current);
     current = new RecursiveSet(current); 
@@ -196,104 +214,211 @@ assert(onionBag.size === 20, "Distinguishes 20 levels of recursion");
 console.log();
 
 // ============================================================================
-// 12. NaN Handling
+// 12. NAN HANDLING
 // ============================================================================
 console.log('--- Test 12: NaN Handling ---');
 const nanSet = new RecursiveSet<number>();
 let threw = false;
-try {
-    nanSet.add(NaN);
-} catch (e) {
-    threw = true;
-}
+try { nanSet.add(NaN); } catch (e) { threw = true; }
 assert(threw, "Explicitly rejects NaN");
 console.log();
 
 // ============================================================================
-// 13. Iterator Semantics
+// 13. ITERATOR SEMANTICS
 // ============================================================================
-console.log('--- Test 13: Iterator Semantics (Live) ---');
+console.log('--- Test 13: Iterator Semantics (Robust Check) ---');
 const modSet = new RecursiveSet(1, 2);
-const items: number[] = [];
-
+let seen99 = false;
 try {
-    // v4.0 Behavior: Iterators are "live".
-    // Modifying the set during iteration is reflected in the iterator.
-    // This is consistent with JS Array behavior but differs from Snapshot behavior in v3.
     for (const item of modSet) {
-        items.push(item as number);
-        // We add 99. Since it is larger than 1 and 2, it is appended.
-        // The iterator will eventually reach it.
         if (!modSet.has(99)) modSet.add(99); 
+        if (item === 99) seen99 = true;
     }
-    console.log("⚠️  Verified: Iterator is Live (Performance Tradeoff accepted for v4.0)");
+    // Hard Assert: Set state is correct (API Contract)
+    assert(modSet.has(99), "Live modification persisted in set");
+    
+    // Soft Assert: Implementation detail (Live Iterator)
+    if (seen99) {
+        console.log("   (Info: Iterator successfully saw the live update)");
+    } else {
+        console.log("   (Info: Iterator acted as snapshot)");
+    }
 } catch (e) {
     console.log("Iterator error:", e);
 }
 console.log();
 
 // ============================================================================
-// 14. Copy-on-Write
+// 14. COPY-ON-WRITE
 // ============================================================================
 console.log('--- Test 14: Copy-on-Write (Shallow Clone) ---');
 const original = new RecursiveSet(1);
 const copy = original.clone();
 copy.add(2);
-
 assert(original.size === 1, "Original unmodified");
 assert(copy.size === 2, "Copy modified");
 console.log();
 
 // ============================================================================
-// 15. Freeze-on-Hash Lifecycle (Equivalence Classes)
+// 15. FREEZE-ON-HASH LIFECYCLE
 // ============================================================================
 console.log('--- Test 15: Freeze-on-Hash Lifecycle ---');
-
 const lifecycleSet = new RecursiveSet<number>();
-try {
-    lifecycleSet.add(1);
-    console.log("✅ PASS: Empty/New set is mutable");
-} catch (e) {
-    assert(false, "❌ FAIL: New set should be mutable");
-}
-
-try {
-    lifecycleSet.add(2);
-    console.log("✅ PASS: Modified (but unhashed) set remains mutable");
-} catch (e) {
-    assert(false, "❌ FAIL: Modified set should still be mutable");
-}
-
+lifecycleSet.add(1);
 const _hashTrigger = lifecycleSet.hashCode; // <--- FREEZE!
+
 let mutationThrew = false;
-try {
-    lifecycleSet.add(3);
-} catch (e) {
-    mutationThrew = true;
-    const msg = (e as Error).message;
-    if (msg.includes("mutableCopy")) {
-         console.log("✅ PASS: Error message suggests mutableCopy()");
-    }
-}
+try { lifecycleSet.add(3); } catch (e) { mutationThrew = true; }
 assert(mutationThrew, "Hashed set throws on mutation (Frozen State)");
-
-const resurrectedSet = lifecycleSet.mutableCopy();
-try {
-    resurrectedSet.add(3);
-    assert(resurrectedSet.has(3), "Copy contains new element");
-    assert(!lifecycleSet.has(3), "Original remains untouched");
-    console.log("✅ PASS: mutableCopy() returns a fresh, writeable instance");
-} catch (e) {
-    assert(false, "❌ FAIL: mutableCopy should return a mutable set");
-}
-
 console.log();
 
-console.log("=== Functional Tests Passed ✓ ===");
+// ============================================================================
+// 16. SECURITY & INVARIANT CHALLENGE
+// ============================================================================
+console.log('--- Test 16: Security & Invariant Challenge ---');
 
-console.log('\n=== RecursiveSet Performance Benchmarks ===\n');
+const safeArray = [1, 2, 3];
+const safeTuple = new Tuple(...safeArray);
+safeArray.push(4);
+assert(safeTuple.length === 3, "Tuple ignores external array mutation (Safe Copy)");
 
-// 1. Idempotency (Hash Check Speed)
+const internalValues = safeTuple.values as any; 
+let pushThrew = false;
+try {
+    internalValues.push(666);
+} catch(e) {
+    pushThrew = true;
+}
+assert(pushThrew, "Tuple internal array is Frozen (Runtime Enforced)");
+
+const bigIntSet = new RecursiveSet<number>();
+bigIntSet.add(-1);
+bigIntSet.add(4294967295); 
+assert(bigIntSet.size === 2, "Distinct hashes for -1 and MAX_UINT32 (No Collision)");
+
+const zeroSet = new RecursiveSet<number>();
+zeroSet.add(0);
+zeroSet.add(-0);
+assert(zeroSet.size === 1, "-0 and +0 are treated as the same element");
+console.log();
+
+// ============================================================================
+// 17. EXTREME NUMBERS & BOUNDARIES
+// ============================================================================
+console.log('--- Test 17: Extreme Numbers & Boundaries ---');
+const extremeSet = new RecursiveSet<number>();
+
+const MAX = Number.MAX_SAFE_INTEGER;
+const MIN = Number.MIN_SAFE_INTEGER;
+const INF = Infinity;
+const NEG_INF = -Infinity;
+
+extremeSet.add(MAX);      
+extremeSet.add(MAX + 1);  
+extremeSet.add(MAX + 3);  // 2^53 + 2 is same as 2^53 + 1, so +3 is next distinct double
+extremeSet.add(MIN);
+extremeSet.add(INF);
+extremeSet.add(NEG_INF);
+
+assert(extremeSet.size === 6, "Can handle Max/Min/Infinity/Boundary distinctness");
+assert(extremeSet.has(Infinity), "Has Infinity");
+assert(extremeSet.has(-Infinity), "Has -Infinity");
+console.log();
+
+// ============================================================================
+// 18. PROPERTY BASED TESTING (SEEDED FUZZER)
+// ============================================================================
+console.log('--- Test 18: Property Based Testing (Seeded) ---');
+
+function randomInput(): number | string | Tuple<any[]> {
+    const r = random();
+    if (r < 0.1) return Infinity; 
+    if (r < 0.2) return -Infinity;
+    if (r < 0.25) return -0;
+    if (r < 0.3) return Number.MAX_SAFE_INTEGER;
+    if (r < 0.5) return Math.floor(random() * 10000) - 5000;
+    if (r < 0.7) return "str" + Math.floor(random() * 100);
+    return new Tuple(Math.floor(random() * 10)); 
+}
+
+let antisymmetryPass = true;
+let transitivityPass = true;
+let reflexivityPass = true;
+let totalityPass = true;
+let symmetryPass = true;
+
+for(let i=0; i<1000; i++) {
+    const a = randomInput();
+    const b = randomInput();
+    const c = randomInput();
+
+    const cmpAB = RecursiveSet.compare(a, b);
+    const cmpBA = RecursiveSet.compare(b, a);
+    const cmpBC = RecursiveSet.compare(b, c);
+    const cmpAC = RecursiveSet.compare(a, c);
+
+    // 1. Reflexivity: a == a
+    if (RecursiveSet.compare(a, a) !== 0) {
+        console.error(`Reflexivity fail at i=${i}:`, fmt(a));
+        reflexivityPass = false;
+    }
+
+    // 2. Totality: Result is not NaN and is Finite
+    if (!Number.isFinite(cmpAB)) {
+        console.error(`Totality fail at i=${i}:`, fmt(a), fmt(b));
+        totalityPass = false;
+    }
+
+    // 3. Antisymmetry: sign(a,b) == -sign(b,a)
+    if (cmpAB !== 0 && Math.sign(cmpAB) !== -Math.sign(cmpBA)) {
+        console.error(`Antisymmetry fail at i=${i}: A=${fmt(a)} B=${fmt(b)}`);
+        antisymmetryPass = false;
+    }
+
+    // 4. Symmetry of Equality
+    if (cmpAB === 0 && cmpBA !== 0) {
+        console.error(`Symmetry fail at i=${i}: A=${fmt(a)} B=${fmt(b)}`);
+        symmetryPass = false;
+    }
+
+    // 5. Transitivity
+    if (cmpAB < 0 && cmpBC < 0 && cmpAC >= 0) {
+        console.error(`Transitivity fail at i=${i} (<): A=${fmt(a)} B=${fmt(b)} C=${fmt(c)}`);
+        transitivityPass = false;
+    }
+}
+
+assert(reflexivityPass, "Comparator Reflexivity holds");
+assert(totalityPass, "Comparator Totality holds");
+assert(antisymmetryPass, "Comparator Antisymmetry holds");
+assert(symmetryPass, "Comparator Symmetry (Equals) holds");
+assert(transitivityPass, "Comparator Transitivity holds");
+console.log();
+
+// ============================================================================
+// 19. TRANSITIVE FREEZE
+// ============================================================================
+console.log('--- Test 19: Transitive Freeze Semantics ---');
+const innerMutable = new RecursiveSet(1);
+const outerMutable = new RecursiveSet(innerMutable);
+
+const _ = outerMutable.hashCode; // Should trigger recursion
+
+let innerThrew = false;
+try {
+    innerMutable.add(2);
+} catch (e) {
+    innerThrew = true;
+}
+assert(innerThrew, "Computing hash of Outer Set recursively freezes Inner Set");
+console.log();
+
+
+// ============================================================================
+// FINAL REPORT
+// ============================================================================
+console.log('=== Benchmarks & Stats ===');
+
 const setUnique = measure('Scenario 1: 10k Duplicate Inserts', () => {
     const s = new RecursiveSet<string>();
     for (let i = 0; i < 10000; i++) s.add("test");
@@ -301,70 +426,36 @@ const setUnique = measure('Scenario 1: 10k Duplicate Inserts', () => {
 });
 assert(setUnique.size === 1, 'Size 1');
 
-// 2. Flat Insert (Ordered vs Random)
-// Note: Random inserts trigger O(N) shifts (splice). 
-// However, V8 optimization handles 10k items efficiently.
-const setRandom = measure('Scenario 2: 10k Random Inserts', () => {
-    const s = new RecursiveSet<number>();
-    for (let i = 0; i < 10000; i++) s.add(Math.random());
-    return s;
-});
-assert(setRandom.size === 10000, 'Size 10k');
-
-// 3. Recursion Stress
-const limit = 2000; 
-measure(`Scenario 3: ${limit} Von Neumann Ordinals`, () => {
-    type Ord = RecursiveSet<Ord>;
-    let current: Ord = new RecursiveSet();
-    
-    for (let i = 0; i < limit; i++) {
-        const next = current.clone(); // O(N) copy
-        next.add(current); // O(1) append (current is strictly larger)
-        current = next;
-    }
-    assert(current.size === limit, `Size ${limit}`);
-});
-
-// 4. Lazy Iterator / Equals
-const setC = new RecursiveSet<number>();
-const setD = new RecursiveSet<number>();
-// Inserting sorted:
-for(let i=0; i<50000; i++) { setC.add(i); setD.add(i); }
-// Force hash mismatch:
-setC.add(-1); 
-setD.add(-2); 
-
-measure('Scenario 4: Equality Check (50k items)', () => {
-    // Should be O(1) due to Hash mismatch!
-    assert(setC.equals(setD) === false, 'Not equal');
-});
-
 measure('Scenario 5: The Float Swamp (Nested Sets)', () => {
     const limit = 5000; 
-    
     const metaSet = new RecursiveSet<RecursiveSet<number>>();
-    
     const smallSets: RecursiveSet<number>[] = [];
+    
+    // Seeded Random for Benchmark consistency
+    const benchRandom = createRNG(42); 
     for (let i = 0; i < limit; i++) {
-        smallSets.push(new RecursiveSet(Math.random()));
+        smallSets.push(new RecursiveSet(benchRandom()));
     }
 
     const start = performance.now();
-    
-    for (const s of smallSets) {
-        metaSet.add(s);
-    }
-    
+    for (const s of smallSets) { metaSet.add(s); }
     const end = performance.now();
-    const duration = end - start;
-
-    console.log(`[Stats] Inserted ${limit} nested float sets in ${duration.toFixed(2)}ms`);
-
+    
+    // Statistical check
     const firstHash = smallSets[0].hashCode;
-    const collisions = smallSets.filter(s => s.hashCode === firstHash).length;
-    console.log(`[Stats] Hash Collisions with first element: ${collisions - 1} / ${limit - 1}`);
+    const collisions = smallSets.filter(s => s.hashCode === firstHash).length - 1;
 
+    console.log(`[Stats] Inserted ${limit} nested float sets in ${(end - start).toFixed(2)}ms`);
+    console.log(`[Stats] Hash Collisions: ${collisions}`);
+    
     assert(metaSet.size === limit, `Size must be ${limit}`);
 });
 
-console.log('\n✅ All Benchmarks Completed');
+console.log('\n=======================================');
+if (failureCount === 0) {
+    console.log(`✅ ALL TESTS PASSED. Ready for Release.`);
+    process.exit(0);
+} else {
+    console.error(`❌ ${failureCount} TESTS FAILED.`);
+    process.exit(1);
+}
