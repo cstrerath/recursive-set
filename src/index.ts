@@ -8,6 +8,29 @@
 const FNV_PRIME = 16777619;
 const FNV_OFFSET = 2166136261;
 
+const floatBuffer = new ArrayBuffer(8);
+const floatView = new Float64Array(floatBuffer);
+const intView = new Int32Array(floatBuffer);
+
+function hashNumber(val: number): number {
+    if (Number.isInteger(val)) {
+        let h = FNV_OFFSET;
+        h ^= val;
+        h = Math.imul(h, FNV_PRIME);
+        return h >>> 0;
+    }
+
+    floatView[0] = val;
+    let h = FNV_OFFSET;
+    
+    h ^= intView[0];
+    h = Math.imul(h, FNV_PRIME);
+    h ^= intView[1];
+    h = Math.imul(h, FNV_PRIME);
+    
+    return h >>> 0;
+}
+
 function hashString(str: string): number {
     let hash = FNV_OFFSET;
     const len = str.length;
@@ -20,13 +43,7 @@ function hashString(str: string): number {
 
 function hashValue(val: unknown): number {
     if (typeof val === 'string') return hashString(val);
-    
-    if (typeof val === 'number') {
-        let hash = FNV_OFFSET;
-        hash ^= (val | 0);
-        hash = Math.imul(hash, FNV_PRIME);
-        return hash >>> 0;
-    }
+    if (typeof val === 'number') return hashNumber(val);
     
     // Fast Path: Objects with cached hash
     if (val && typeof val === 'object' && 'hashCode' in val) {

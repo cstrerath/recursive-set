@@ -339,4 +339,32 @@ measure('Scenario 4: Equality Check (50k items)', () => {
     assert(setC.equals(setD) === false, 'Not equal');
 });
 
+measure('Scenario 5: The Float Swamp (Nested Sets)', () => {
+    const limit = 5000; 
+    
+    const metaSet = new RecursiveSet<RecursiveSet<number>>();
+    
+    const smallSets: RecursiveSet<number>[] = [];
+    for (let i = 0; i < limit; i++) {
+        smallSets.push(new RecursiveSet(Math.random()));
+    }
+
+    const start = performance.now();
+    
+    for (const s of smallSets) {
+        metaSet.add(s);
+    }
+    
+    const end = performance.now();
+    const duration = end - start;
+
+    console.log(`[Stats] Inserted ${limit} nested float sets in ${duration.toFixed(2)}ms`);
+
+    const firstHash = smallSets[0].hashCode;
+    const collisions = smallSets.filter(s => s.hashCode === firstHash).length;
+    console.log(`[Stats] Hash Collisions with first element: ${collisions - 1} / ${limit - 1}`);
+
+    assert(metaSet.size === limit, `Size must be ${limit}`);
+});
+
 console.log('\n✅ All Benchmarks Completed');
