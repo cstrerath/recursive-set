@@ -1,5 +1,5 @@
 import { RecursiveSet } from '../src/index'; 
-import * as DP from './davies-putnam'; 
+import * as DP from './davis-putnam';
 
 /**
  * @file N-Queens SAT Solver Example
