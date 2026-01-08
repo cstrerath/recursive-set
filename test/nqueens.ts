@@ -1,45 +1,81 @@
-import { RecursiveSet } from '../src/index';
+import { RecursiveSet } from '../src/index'; 
 import * as DP from './davies-putnam'; 
 
 /**
- * N-Queens SAT Problem Generator & Visualizer.
- * Uses Davies-Putnam solver to find placements.
- * 
- * Logic adapted from Karl Stroetmann.
+ * @file N-Queens SAT Solver Example
+ * @description
+ * Generates CNF constraints for the N-Queens problem and solves them using DPLL.
+ * * **Encoding:**
+ * - Variables are encoded as 32-bit Integers: `(Row << 16) | Col`.
+ * - Literals are Integers: Positive for TRUE, Negative for FALSE (NOT).
+ * - Clauses are Sets of Literals (Disjunctions).
+ * - CNF is a Set of Clauses (Conjunction).
  */
 
-// === Types ===
-// Literal types are inferred from the Library usage, but aliases help readability
-type Variable = DP.Variable;
-type Literal = DP.Literal;
-type Clause = DP.Clause;
+// ============================================================================
+// TYPES (Integer Optimization)
+// ============================================================================
 
-// === Helper Functions ===
+type Variable = number; 
+type Literal = number; 
+type Clause = RecursiveSet<Literal>;
+type CNF = RecursiveSet<Clause>;
 
-function varName(row: number, col: number): Variable {
-    return `Q<${row},${col}>`;
+// ============================================================================
+// ENCODING LOGIC (Bit Packing)
+// ============================================================================
+
+/**
+ * Packs Row and Column into a single unique 32-bit integer.
+ * Limits: Row and Col must be < 65535.
+ */
+function encode(row: number, col: number): Variable {
+    // High 16 bits = Row, Low 16 bits = Col
+    return (row << 16) | col;
 }
 
 /**
- * Returns a set containing clauses that expresses that at most one of the variables in S is True.
+ * Unpacks an integer variable back into [Row, Col].
  */
-function atMostOne(S: RecursiveSet<Variable>): RecursiveSet<Clause> {
-    const result = new RecursiveSet<Clause>();
-    const arr: Variable[] = [];
-    for(const v of S) {
-        arr.push(v);
-    }
-    
-    // Pairwise constraint: NOT (A and B) <=> (NOT A or NOT B)
-    for (let i = 0; i < arr.length; i++) {
-        for (let j = i + 1; j < arr.length; j++) {
-            const p = arr[i];
-            const q = arr[j];
+function decode(val: Variable): [number, number] {
+    const v = Math.abs(val); // Handle potential negative literals safely
+    return [v >> 16, v & 0xFFFF];
+}
 
+/**
+ * Formats a variable for display (e.g., "Q<1,1>").
+ */
+function formatVar(val: Variable): string {
+    const [r, c] = decode(val);
+    return `Q<${r},${c}>`;
+}
+
+// ============================================================================
+// CONSTRAINT GENERATORS
+// ============================================================================
+
+/**
+ * Returns a set of clauses ensuring at most one variable in S is true.
+ * Logic: Pairwise mutex. For every pair (A, B), add clause (NOT A or NOT B).
+ * Complexity: O(|S|^2) clauses.
+ */
+function atMostOne(S: RecursiveSet<Variable>): CNF {
+    const result = new RecursiveSet<Clause>();
+    
+    // Convert to array for indexed access (Fast Iteration)
+    const vars: Variable[] = [];
+    for (const v of S) vars.push(v);
+    
+    const len = vars.length;
+    for (let i = 0; i < len; i++) {
+        for (let j = i + 1; j < len; j++) {
+            const p = vars[i];
+            const q = vars[j];
+
+            // Clause: ¬p V ¬q  =>  {-p, -q}
             const clause = new RecursiveSet<Literal>();
-            // Using raw arrays for Literals is natively supported by v4.0.0
-            clause.add(['¬', p]);
-            clause.add(['¬', q]);
+            clause.add(-p);
+            clause.add(-q);
 
             result.add(clause);
         }
@@ -47,136 +83,137 @@ function atMostOne(S: RecursiveSet<Variable>): RecursiveSet<Clause> {
     return result;
 }
 
-function atMostOneInRow(row: number, n: number): RecursiveSet<Clause> {
-    const VarsInRow = new RecursiveSet<Variable>();
+function atMostOneInRow(row: number, n: number): CNF {
+    const varsInRow = new RecursiveSet<Variable>();
     for (let col = 1; col <= n; col++) {
-        VarsInRow.add(varName(row, col));
+        varsInRow.add(encode(row, col));
     }
-    return atMostOne(VarsInRow);
+    return atMostOne(varsInRow);
 }
 
-function oneInColumn(col: number, n: number): RecursiveSet<Clause> {
-    const VarsInColumn = new RecursiveSet<Literal>();
+function oneInColumn(col: number, n: number): CNF {
+    // "At least one in column": (A or B or C...)
+    const clause = new RecursiveSet<Literal>();
     for (let row = 1; row <= n; row++) {
-        VarsInColumn.add(varName(row, col));
+        clause.add(encode(row, col));
     }
-    // "At least one" is just the clause of all variables OR'd
+    
     const result = new RecursiveSet<Clause>();
-    result.add(VarsInColumn);
+    result.add(clause);
     return result;
 }
 
-function atMostOneInFallingDiagonal(k: number, n: number): RecursiveSet<Clause> {
-    const VarsInDiagonal = new RecursiveSet<Variable>();
+function atMostOneInFallingDiagonal(k: number, n: number): CNF {
+    const varsInDiag = new RecursiveSet<Variable>();
     for (let row = 1; row <= n; row++) {
         for (let col = 1; col <= n; col++) {
             if (row - col === k) {
-                VarsInDiagonal.add(varName(row, col));
+                varsInDiag.add(encode(row, col));
             }
         }
     }
-    return atMostOne(VarsInDiagonal);
+    return atMostOne(varsInDiag);
 }
 
-function atMostOneInRisingDiagonal(k: number, n: number): RecursiveSet<Clause> {
-    const VarsInDiagonal = new RecursiveSet<Variable>();
+function atMostOneInRisingDiagonal(k: number, n: number): CNF {
+    const varsInDiag = new RecursiveSet<Variable>();
     for (let row = 1; row <= n; row++) {
         for (let col = 1; col <= n; col++) {
             if (row + col === k) {
-                VarsInDiagonal.add(varName(row, col));
+                varsInDiag.add(encode(row, col));
             }
         }
     }
-    return atMostOne(VarsInDiagonal);
+    return atMostOne(varsInDiag);
 }
 
-function allClauses(n: number): RecursiveSet<Clause> {
-    const all: Array<RecursiveSet<Clause>> = [];
-    
-    // 1. At most one queen per row
+/**
+ * Generates all CNF constraints for the N-Queens problem.
+ */
+function allClauses(n: number): CNF {
+    // Collect groups of clauses in an array first to minimize Union operations
+    const collection: CNF[] = [];
+
+    // 1. Row Constraints
     for (let row = 1; row <= n; row++) {
-        all.push(atMostOneInRow(row, n));
+        collection.push(atMostOneInRow(row, n));
     }
-    
-    // 2. At most one queen per rising diagonal
+
+    // 2. Rising Diagonals
     for (let k = 3; k <= 2 * n; k++) {
-        all.push(atMostOneInRisingDiagonal(k, n));
+        collection.push(atMostOneInRisingDiagonal(k, n));
     }
-    
-    // 3. At most one queen per falling diagonal
+
+    // 3. Falling Diagonals
     for (let k = -(n - 2); k <= n - 2; k++) {
-        all.push(atMostOneInFallingDiagonal(k, n));
+        collection.push(atMostOneInFallingDiagonal(k, n));
     }
-    
-    // 4. At least one queen per column
+
+    // 4. Column Constraints (At least one)
     for (let col = 1; col <= n; col++) {
-        all.push(oneInColumn(col, n));
+        collection.push(oneInColumn(col, n));
     }
+
+    // Merge all clause sets efficiently
+    let result = new RecursiveSet<Clause>();
+    for (const group of collection) {
+        // Efficient O(N+M) union thanks to RecursiveSet optimization
+        result = result.union(group);
+    }
+    return result;
+}
+
+// ============================================================================
+// SOLVER WRAPPER
+// ============================================================================
+
+function queens(n: number): CNF | null {
+    console.log(`Generating clauses for ${n} queens (Integer Mode)...`);
+    const clauses = allClauses(n);
+    console.log(`Generated ${clauses.size} clauses.`);
     
-    const result = new RecursiveSet<Clause>();
-    for (const clauses of all) {
-        for (const clause of clauses) {
-             result.add(clause);
+    console.log("Starting Davis-Putnam solver...");
+    const solution = DP.solve(clauses);
+    
+    const emptyClause = new RecursiveSet<Literal>();
+    if (solution.has(emptyClause)) {
+        return null; // UNSAT
+    }
+    return solution;
+}
+
+// ============================================================================
+// VISUALIZATION
+// ============================================================================
+
+/**
+ * Extracts positive assignments from the solution set.
+ */
+function getBoardMap(solution: CNF): Record<number, number> {
+    const result: Record<number, number> = {};
+    
+    // Iterate over unit clauses in the solution
+    for (const clause of solution) {
+        for (const lit of clause) {
+            // Positive literal = Queen placed
+            if (lit > 0) {
+                const [row, col] = decode(lit);
+                result[row] = col;
+            }
         }
     }
     return result;
 }
 
-// === Solving Logic ===
-
-function queens(n: number): RecursiveSet<Clause> | null {
-    console.log(`Generating clauses for ${n} queens...`);
-    const Clauses = allClauses(n);
-    console.log(`Generated ${Clauses.size} clauses.`);
+function printBoard(solution: CNF) {
+    const board = getBoardMap(solution);
+    const rows = Object.keys(board).map(Number);
+    if (rows.length === 0) {
+        console.log("Empty solution set.");
+        return;
+    }
     
-    console.log("Starting Davis-Putnam solver...");
-    const Solution = DP.solve(Clauses);
-    
-    const EmptyClause = new RecursiveSet<Literal>();
-    if (Solution.has(EmptyClause)) {
-        console.log(`The problem is not solvable for ${n} queens!`);
-        return null;
-    }
-    return Solution;
-}
-
-// === Visualization Logic (Console Version) ===
-
-function removeNegativeLiterals(Solution: RecursiveSet<Clause>): RecursiveSet<Variable> {
-    const Result = new RecursiveSet<Variable>();
-    for (const C of Solution) {
-        for (const lit of C) {
-            // Positive literals are strings "Q<1,1>", negative are arrays ["¬", "Q<1,1>"]
-            if (!Array.isArray(lit)) {
-                Result.add(lit);
-            }
-        }
-    }
-    return Result;
-}
-
-function extractRowCol(varName: string): [string, string] {
-    const left = varName.indexOf('<');
-    const comma = varName.indexOf(',');
-    const right = varName.indexOf('>');
-    const row = varName.substring(left + 1, comma);
-    const col = varName.substring(comma + 1, right);
-    return [row, col];
-}
-
-function transform(Solution: RecursiveSet<Clause>): Record<number, number> {
-    const positiveLiterals = removeNegativeLiterals(Solution);
-    const Result: Record<number, number> = {};
-    for (const name of positiveLiterals) {
-        const [row, col] = extractRowCol(name);
-        Result[parseInt(row, 10)] = parseInt(col, 10);
-    }
-    return Result;
-}
-
-function printBoard(Solution: RecursiveSet<Clause>) {
-    const transformed = transform(Solution);
-    const n = Object.keys(transformed).length;
+    const n = Math.max(...rows); 
     
     console.log(`\nSolution for ${n}-Queens:`);
     console.log("   " + Array.from({length: n}, (_, i) => i + 1).join(" "));
@@ -184,11 +221,10 @@ function printBoard(Solution: RecursiveSet<Clause>) {
 
     for (let row = 1; row <= n; row++) {
         let line = `${row} |`;
-        if (row < 10) line = ` ${row} |`; // Padding
+        if (row < 10) line = ` ${row} |`;
 
         for (let col = 1; col <= n; col++) {
-            const placedCol = transformed[row];
-            if (placedCol === col) {
+            if (board[row] === col) {
                 line += "Q ";
             } else {
                 line += ". ";
@@ -199,7 +235,9 @@ function printBoard(Solution: RecursiveSet<Clause>) {
     console.log("  +" + "-".repeat(n * 2) + "+");
 }
 
-// === Main Execution ===
+// ============================================================================
+// MAIN EXECUTION
+// ============================================================================
 
 const N = 16; 
 
@@ -210,5 +248,5 @@ console.timeEnd('Total Runtime');
 if (solution) {
     printBoard(solution);
 } else {
-    console.log("No solution found.");
+    console.log(`The problem is not solvable for ${N} queens.`);
 }
