@@ -1,6 +1,6 @@
 /**
  * @module recursive-set
- * @version 7.0.0
+ * @version 7.1.0
  * @description
  * **High-Performance ZFC Set Implementation.**
  * This library sacrifices runtime safety checks for raw speed.
@@ -11,7 +11,7 @@
  */
 
 export type Primitive = number | string;
-export type Value = Primitive | RecursiveSet<any> | Tuple<any> | ReadonlyArray<Value>;
+export type Value = Primitive | RecursiveSet<Value> | Tuple<Value> | RecursiveMap<Value> | ReadonlyArray<Value>;
 
 // ============================================================================
 // FAST HASHING (Optimized FNV-1a)
@@ -51,7 +51,7 @@ function hashString(str: string): number {
 function hashValue(v: Value): number {
     if (typeof v === 'number') return hashNumber(v);
     if (typeof v === 'string') return hashString(v);
-    if (v instanceof RecursiveSet || v instanceof Tuple) return v.hashCode;
+    if (v instanceof RecursiveSet || v instanceof Tuple || v instanceof RecursiveMap) return v.hashCode;
     if (Array.isArray(v)) {
         let h = FNV_OFFSET;
         for (let i = 0; i < v.length; i++) {
@@ -99,6 +99,7 @@ export function compare(a: Value, b: Value): number {
 
     // Deep Compare
     if (a instanceof RecursiveSet && b instanceof RecursiveSet) return a.compare(b);
+    if (a instanceof RecursiveMap && b instanceof RecursiveMap) return a.compare(b);
     if (a instanceof Tuple && b instanceof Tuple) return compareSequences(a.raw, b.raw);
     if (Array.isArray(a) && Array.isArray(b)) return compareSequences(a, b);
 
@@ -375,6 +376,20 @@ export class RecursiveSet<T extends Value> {
     
     clone(): RecursiveSet<T> { return this.mutableCopy(); }
 
+    /**
+     * Picks a random element in O(1).
+     * **UNSAFE:** Assumes the set is NOT empty.
+     * @returns The element of type T.
+     * @throws (at runtime) or returns undefined if set is empty, but TS treats it as T.
+     */
+    pickRandom(): T {
+        const arr = this.#elements;
+        // Performance-Hack: Kein if-check.
+        // Wir vertrauen darauf, dass der Caller vorher !isEmpty() geprüft hat.
+        const idx = (Math.random() * arr.length) | 0;
+        return arr[idx]!; // Force TS to accept this is defined
+    }
+
     // === OPTIMIZED SET OPERATIONS (Merge Scan) ===
 
     /**
@@ -533,6 +548,188 @@ export class RecursiveSet<T extends Value> {
     toString(): string { return `{${this.#elements.join(', ')}}`; }
     
     /** Custom inspection for Node.js console to avoid printing internal state. */
+    [Symbol.for('nodejs.util.inspect.custom')]() { return this.toString(); }
+}
+
+/**
+ * Immutable Map based on RecursiveSet architecture.
+ * Maps Keys to Values using Deep Value Equality for Keys.
+ *
+ * Storage: Sorted Array of {key, value} objects.
+ * Lookup: Binary Search on Keys.
+ */
+export class RecursiveMap<K extends Value, V extends Value> {
+    #entries: Array<{ key: K, value: V }>;
+    #hashCode: number | null = null;
+    #isFrozen: boolean = false;
+
+    constructor(entries?: Iterable<[K, V]>) {
+        this.#entries = [];
+        if (entries) {
+            for (const [k, v] of entries) {
+                this.set(k, v);
+            }
+        }
+    }
+
+    // === CRITICAL INFRASTRUCTURE ===
+
+    #checkFrozen(op: string) {
+        if (this.#isFrozen) {
+            throw new Error(`InvalidOperation: Cannot ${op} a frozen RecursiveMap. Use mutableCopy().`);
+        }
+    }
+
+    get size(): number { return this.#entries.length; }
+
+    isEmpty(): boolean { return this.#entries.length === 0; }
+
+    get hashCode(): number {
+        if (this.#hashCode !== null) return this.#hashCode;
+        let h = 0;
+        const len = this.#entries.length;
+        // Map Hash: Combine Hash(Key) and Hash(Value)
+        // We use the same accumulation strategy as Set, but including values.
+        for (let i = 0; i < len; i++) {
+            const entry = this.#entries[i];
+            const hKey = hashValue(entry.key);
+            const hVal = hashValue(entry.value);
+            // Mix key and value hashes
+            const entryHash = (Math.imul(hKey, 31) ^ hVal) | 0;
+            h = (Math.imul(31, h) + entryHash) | 0;
+        }
+        this.#hashCode = h;
+        this.#isFrozen = true;
+        return h;
+    }
+
+    /**
+     * Deep comparison of two maps.
+     * Maps are equal if they have the same size and identical (key, value) pairs.
+     */
+    compare(other: RecursiveMap<Value, Value>): number {
+        if (this === other) return 0;
+
+        const lenA = this.#entries.length;
+        const lenB = other.#entries.length;
+        if (lenA !== lenB) return lenA - lenB;
+
+        // Since entries are sorted by Key, we can iterate linearly.
+        for (let i = 0; i < lenA; i++) {
+            const entryA = this.#entries[i];
+            const entryB = other.#entries[i];
+
+            // 1. Compare Keys
+            const cmpKey = compare(entryA.key, entryB.key);
+            if (cmpKey !== 0) return cmpKey;
+
+            // 2. If Keys are equal, compare Values
+            const cmpVal = compare(entryA.value, entryB.value);
+            if (cmpVal !== 0) return cmpVal;
+        }
+        return 0;
+    }
+
+    equals(other: RecursiveMap<Value, Value>): boolean { return this.compare(other) === 0; }
+
+    // === DATA ACCESS ===
+
+    /**
+     * Binary Search for Key Index.
+     * Returns index if found, or bitwise complement (~index) of insertion point if not found.
+     */
+    #indexOf(key: K): number {
+        const arr = this.#entries;
+        let low = 0, high = arr.length - 1;
+
+        while (low <= high) {
+            const mid = (low + high) >>> 1;
+            const cmp = compare(arr[mid].key, key);
+            if (cmp === 0) return mid;
+            if (cmp < 0) low = mid + 1;
+            else high = mid - 1;
+        }
+        return ~low; // Returns - (insertionPoint + 1)
+    }
+
+    has(key: K): boolean {
+        return this.#indexOf(key) >= 0;
+    }
+
+    get(key: K): V | undefined {
+        const idx = this.#indexOf(key);
+        return idx >= 0 ? this.#entries[idx].value : undefined;
+    }
+
+    // === MUTATION ===
+
+    set(key: K, value: V): this {
+        this.#checkFrozen('set() on');
+        const idx = this.#indexOf(key);
+
+        if (idx >= 0) {
+            // Update existing key
+            // Optimization: If value is structurally equal, do nothing (preserve hash/immutability check cost)
+            if (compare(this.#entries[idx].value, value) !== 0) {
+                this.#entries[idx].value = value;
+                this.#hashCode = null;
+            }
+        } else {
+            // Insert new key at sorted position
+            const insertPos = ~idx;
+            this.#entries.splice(insertPos, 0, { key, value });
+            this.#hashCode = null;
+        }
+        return this;
+    }
+
+    delete(key: K): boolean {
+        this.#checkFrozen('delete() from');
+        const idx = this.#indexOf(key);
+        if (idx >= 0) {
+            this.#entries.splice(idx, 1);
+            this.#hashCode = null;
+            return true;
+        }
+        return false;
+    }
+
+    clear(): this {
+        this.#checkFrozen('clear()');
+        this.#entries = [];
+        this.#hashCode = null;
+        return this;
+    }
+
+    mutableCopy(): RecursiveMap<K, V> {
+        const map = new RecursiveMap<K, V>();
+        // Shallow copy the array of objects (objects themselves are {key, value})
+        // Since we treat K and V as immutable values in this library context, simple object spread or slice is ok for the array container
+        map.#entries = this.#entries.map(e => ({ key: e.key, value: e.value }));
+        return map;
+    }
+
+    clone(): RecursiveMap<K, V> { return this.mutableCopy(); }
+
+    // === ITERATORS & UTILS ===
+
+    keys(): K[] { return this.#entries.map(e => e.key); }
+    values(): V[] { return this.#entries.map(e => e.value); }
+    entries(): [K, V][] { return this.#entries.map(e => [e.key, e.value]); }
+
+    *[Symbol.iterator](): Iterator<[K, V]> {
+        for (const e of this.#entries) {
+            yield [e.key, e.value];
+        }
+    }
+
+    toString(): string {
+        const body = this.#entries
+            .map(e => `${String(e.key)} => ${String(e.value)}`)
+            .join(', ');
+        return `Map{${body}}`;
+    }
+
     [Symbol.for('nodejs.util.inspect.custom')]() { return this.toString(); }
 }
 
