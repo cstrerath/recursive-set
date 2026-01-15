@@ -11,7 +11,7 @@
  */
 
 export type Primitive = number | string;
-export type Value = Primitive | RecursiveSet<Value> | Tuple<Value> | RecursiveMap<Value> | ReadonlyArray<Value>;
+export type Value = Primitive | RecursiveSet<Value> | Tuple<Value> | RecursiveMap<Value,Value> | ReadonlyArray<Value>;
 
 // ============================================================================
 // FAST HASHING (Optimized FNV-1a)
