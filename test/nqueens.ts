@@ -1,4 +1,4 @@
-import { RecursiveSet } from '../src/index'; 
+import { RecursiveSet } from '../src/strict-tree'; 
 import * as DP from './davis-putnam';
 
 /**

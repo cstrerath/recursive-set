@@ -1,6 +1,6 @@
 /**
  * @module recursive-set
- * @version 7.1.0
+ * @version 7.2.0
  * @description
  * **High-Performance ZFC Set Implementation.**
  * This library sacrifices runtime safety checks for raw speed.
@@ -11,7 +11,7 @@
  */
 
 export type Primitive = number | string;
-export type Value = Primitive | RecursiveSet<Value> | Tuple<Value> | RecursiveMap<Value,Value> | ReadonlyArray<Value>;
+export type Value = Primitive | RecursiveSet<Value> | Tuple<Value[]> | RecursiveMap<Value,Value> | ReadonlyArray<Value>;
 
 // ============================================================================
 // FAST HASHING (Optimized FNV-1a)
@@ -48,7 +48,7 @@ function hashString(str: string): number {
     return h >>> 0;
 }
 
-function hashValue(v: Value): number {
+export function hashValue(v: Value): number {
     if (typeof v === 'number') return hashNumber(v);
     if (typeof v === 'string') return hashString(v);
     if (v instanceof RecursiveSet || v instanceof Tuple || v instanceof RecursiveMap) return v.hashCode;
@@ -76,32 +76,50 @@ function hashValue(v: Value): number {
  * same hash, they may be treated as equal. Avoid mixing structure types in the same set.
  */
 export function compare(a: Value, b: Value): number {
+    // 1. Identity Check (Fastest)
     if (a === b) return 0;
-    
-    // Fast path for primitives
+
+    // 2. Primitive & Broad Type Separation
     if (typeof a === 'number' && typeof b === 'number') return a - b;
     if (typeof a === 'string' && typeof b === 'string') return a < b ? -1 : 1;
 
     const typeA = typeof a;
     const typeB = typeof b;
-    
-    // Type Score: Number(1) < String(2) < Array/Tuple(3) < Set(4)
     if (typeA !== typeB) {
         const scoreA = (typeA === 'number') ? 1 : (typeA === 'string' ? 2 : 3);
         const scoreB = (typeB === 'number') ? 1 : (typeB === 'string' ? 2 : 3);
         return scoreA - scoreB;
     }
 
-    // Hash Short-Circuit
+    // --- OBJECT COMPARISON START ---
+
+    // 3. Primary Sort Key: Hash Code (O(1))
     const h1 = hashValue(a);
     const h2 = hashValue(b);
-    if (h1 !== h2) return h1 < h2 ? -1 : 1;
+    if (h1 !== h2) return h1 - h2;
 
-    // Deep Compare
+    // 4. Same-Type Optimization (Hot Path)
+    // Wenn Hash gleich ist (Kollision oder Gleichheit), prüfen wir zuerst den gleichen Typ.
+    // Das deckt 99.9% der Fälle ab.
     if (a instanceof RecursiveSet && b instanceof RecursiveSet) return a.compare(b);
     if (a instanceof RecursiveMap && b instanceof RecursiveMap) return a.compare(b);
     if (a instanceof Tuple && b instanceof Tuple) return compareSequences(a.raw, b.raw);
     if (Array.isArray(a) && Array.isArray(b)) return compareSequences(a, b);
+
+    // 5. Mixed-Type Collision Handling (Cold Path)
+    // Dieser Code wird nur kompiliert/ausgeführt, wenn wir wirklich 
+    // eine Hash-Kollision zwischen UNTERSCHIEDLICHEN Typen haben.
+    const getTypeId = (v: Value): number => {
+        if (Array.isArray(v)) return 1;
+        if (v instanceof Tuple) return 2;
+        if (v instanceof RecursiveSet) return 3;
+        if (v instanceof RecursiveMap) return 4;
+        return 99;
+    };
+
+    const tA = getTypeId(a);
+    const tB = getTypeId(b);
+    if (tA !== tB) return tA - tB;
 
     return 0;
 }

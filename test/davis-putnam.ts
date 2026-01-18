@@ -1,4 +1,4 @@
-import { RecursiveSet } from '../src/index';
+import { RecursiveSet } from '../src/strict-tree';
 
 /**
  * @module davies-putnam

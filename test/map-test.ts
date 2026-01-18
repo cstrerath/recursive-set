@@ -1,4 +1,4 @@
-import { RecursiveMap, RecursiveSet, Tuple, Value } from '../src/index';
+import { RecursiveMap, RecursiveSet, Tuple, Value } from '../src/strict-tree';
 
 // --- Simple Test Runner ---
 let passed = 0;
@@ -10,7 +10,7 @@ function test(name: string, fn: () => void) {
         fn();
         console.log("✅ PASS");
         passed++;
-    } catch (e) {
+    } catch (e : any) {
         console.log("❌ FAIL");
         console.error("   Error:", e.message);
         failed++;
@@ -200,7 +200,7 @@ test("Stress Test (1000 items)", () => {
 // =========================================================
 test("Immutability Contract", () => {
     const map = new RecursiveMap<RecursiveSet<number>, string>();
-    const setKey = new RecursiveSet(1);
+    const setKey = new RecursiveSet<number>(1);
 
     map.set(setKey, "Value");
 
@@ -218,7 +218,7 @@ test("Immutability Contract", () => {
         // Aber RecursiveSet friert sich ein, sobald sein eigener hashCode abgerufen wird.
         // Der Map.hashCode ruft Key.hashCode auf. Ergo: setKey MUSS frozen sein.
         throw new Error("Mutation succeeded but should have failed");
-    } catch (e) {
+    } catch (e : any) {
         assert(e.message.includes("frozen"), "Error should be about frozen state");
     }
 });
