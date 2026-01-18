@@ -39,65 +39,85 @@ export function selectLiteral(
   Variables: RecursiveSet<Variable>,
   UsedVars: RecursiveSet<Variable>
 ): Literal {
-  let maxLiteral: Literal = Array.from(Variables)[0] ?? 'x';
-  let maxScore = -Infinity;
-  for (const variable of Variables) {
-    if (!UsedVars.has(variable)) {
-      const pos: Literal = variable;
-      const neg: Literal = ['¬', variable];
-      let posScore = 0;
-      let negScore = 0;
-      for (const C of Clauses) {
-        const clause = C as Clause;
-        const size = clause.size;
-        for (const lit of clause) {
-          if (!Array.isArray(lit) && lit === variable) {
-            posScore += Math.pow(2, -size);
-          } else if (Array.isArray(lit) && lit[0] === '¬' && lit[1] === variable) {
-            negScore += Math.pow(2, -size);
-          }
-        }
-      }
-      if (posScore > maxScore) {
-        maxScore = posScore;
-        maxLiteral = pos;
-      }
-      if (negScore > maxScore) {
-        maxScore = negScore;
-        maxLiteral = neg;
+  // Cache weight by clause size
+  const weightCache = new Map<number, number>();
+
+  // Scores: variable -> [posScore, negScore]
+  const scores = new Map<Variable, [number, number]>();
+
+  for (const clause of Clauses) {
+    const size = clause.size;
+    let w = weightCache.get(size);
+    if (w === undefined) {
+      w = Math.pow(2, -size);
+      weightCache.set(size, w);
+    }
+
+    for (const lit of clause) {
+      if (Array.isArray(lit)) {
+        const v = lit[1];
+        const s = scores.get(v) ?? [0, 0];
+        s[1] += w; // neg
+        scores.set(v, s);
+      } else {
+        const v = lit;
+        const s = scores.get(v) ?? [0, 0];
+        s[0] += w; // pos
+        scores.set(v, s);
       }
     }
   }
-  return maxLiteral;
+
+  // pick best literal among unused vars
+  let bestVar: Variable | null = null;
+  let bestIsNeg = false;
+  let bestScore = -Infinity;
+
+  for (const v of Variables) {
+    if (UsedVars.has(v)) continue;
+    const [pos, neg] = scores.get(v) ?? [0, 0];
+    if (pos > bestScore) { bestScore = pos; bestVar = v; bestIsNeg = false; }
+    if (neg > bestScore) { bestScore = neg; bestVar = v; bestIsNeg = true; }
+  }
+
+  if (bestVar === null) return Array.from(Variables)[0] ?? 'x';
+  return bestIsNeg ? ['¬', bestVar] : bestVar;
 }
+
 
 export function reduce(Clauses: RecursiveSet<Clause>, l: Literal): RecursiveSet<Clause> {
   const lBar = complement(l);
-  const result = new RecursiveSet<Clause>();
+
+  const out: Clause[] = [];
+
   for (const clause of Clauses) {
-    let hasL = false;
-    let hasLBar = false;
+    let satisfied = false;
+    let removedAny = false;
+    const kept: Literal[] = [];
+
     for (const lit of clause) {
-      if (sameLiteral(lit, l)) hasL = true;
-      if (sameLiteral(lit, lBar)) hasLBar = true;
-    }
-    if (hasLBar) {
-      const newClause = new RecursiveSet<Literal>();
-      for (const lit of clause) {
-        if (!sameLiteral(lit, lBar)) {
-          newClause.add(lit);
-        }
+      if (sameLiteral(lit, l)) {
+        satisfied = true;           // clause is true -> drop it
+        break;
       }
-      result.add(newClause);
-    } else if (!hasL) {
-      result.add(clause);
+      if (sameLiteral(lit, lBar)) {
+        removedAny = true;          // drop complement
+        continue;
+      }
+      kept.push(lit);
     }
+
+    if (satisfied) continue;
+    if (removedAny) out.push(RecursiveSet.fromArray(kept) as Clause);
+    else out.push(clause);
   }
-  const unitClause = new RecursiveSet<Literal>();
-  unitClause.add(l);
-  result.add(unitClause);
-  return result;
+
+  // add unit clause {l}
+  out.push(RecursiveSet.fromArray([l]) as Clause);
+
+  return RecursiveSet.fromArray(out);
 }
+
 
 export function saturate(Clauses: RecursiveSet<Clause>): RecursiveSet<Clause> {
   let S = Clauses;
