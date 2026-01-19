@@ -85,9 +85,20 @@ export function selectLiteral(
 }
 
 
+// Hilfsfunktion: Schneller Zugriff auf das erste Element (statt Random)
+function pickFirst<T extends Value>(S: RecursiveSet<T>): T | null {
+    // Der Iterator im AVL Tree ist lazy. 
+    // Er geht nur bis zum ersten Knoten runter -> O(log N) statt O(N) für .raw
+    for (const val of S) {
+        return val;
+    }
+    return null;
+}
+
 export function reduce(Clauses: RecursiveSet<Clause>, l: Literal): RecursiveSet<Clause> {
   const lBar = complement(l);
 
+  // Optimierung: Wir wissen ungefähr wie groß das Resultat ist, aber Arrays wachsen in JS eh dynamisch.
   const out: Clause[] = [];
 
   for (const clause of Clauses) {
@@ -95,47 +106,89 @@ export function reduce(Clauses: RecursiveSet<Clause>, l: Literal): RecursiveSet<
     let removedAny = false;
     const kept: Literal[] = [];
 
+    // Hot Path Optimierung: sameLiteral inline checken spart Function Call Overhead
+    // Wir wissen hier dank Types, was Literal ist.
+    const isLArray = Array.isArray(l);
+    const lVal = isLArray ? l[1] : l;
+    
+    // lBar vorbereiten
+    const isLBarArray = Array.isArray(lBar);
+    const lBarVal = isLBarArray ? lBar[1] : lBar;
+
     for (const lit of clause) {
-      if (sameLiteral(lit, l)) {
-        satisfied = true;           // clause is true -> drop it
-        break;
+      // Inline sameLiteral(lit, l)
+      // Check: Ist lit identisch zu l?
+      if (lit === l) { // String Compare oder Referenz (bei Tuple)
+          satisfied = true; 
+          break;
       }
-      if (sameLiteral(lit, lBar)) {
-        removedAny = true;          // drop complement
+      if (Array.isArray(lit) && isLArray && lit[1] === lVal) {
+           // Beide sind Arrays ['¬', 'X'], Variable gleich?
+           satisfied = true;
+           break;
+      }
+      
+      // Inline sameLiteral(lit, lBar)
+      let matchLBar = false;
+      if (lit === lBar) matchLBar = true;
+      else if (Array.isArray(lit) && isLBarArray && lit[1] === lBarVal) matchLBar = true;
+
+      if (matchLBar) {
+        removedAny = true;
         continue;
       }
       kept.push(lit);
     }
 
     if (satisfied) continue;
-    if (removedAny) out.push(RecursiveSet.fromArray(kept) as Clause);
-    else out.push(clause);
+
+    if (removedAny) {
+        // PERFORMANCE WIN #1: 
+        // kept stammt aus einem sortierten Set und wir haben nur gelöscht.
+        // Die Reihenfolge ist erhalten -> Unsafe Construction!
+        out.push(RecursiveSet.fromSortedUnsafe(kept) as Clause);
+    } else {
+        out.push(clause);
+    }
   }
 
   // add unit clause {l}
-  out.push(RecursiveSet.fromArray([l]) as Clause);
+  // Ein einzelnes Element ist trivialerweise sortiert
+  out.push(RecursiveSet.fromSortedUnsafe([l]) as Clause);
 
+  // PERFORMANCE WIN #2:
+  // Wir können hier nicht fromSortedUnsafe nehmen, da sich durch die Modifikationen
+  // die Hashes der Klauseln geändert haben könnten -> Sortierung von 'out' ist nicht garantiert.
+  // Aber fromArray ist hier unvermeidbar für das äußere Set.
   return RecursiveSet.fromArray(out);
 }
 
-
 export function saturate(Clauses: RecursiveSet<Clause>): RecursiveSet<Clause> {
   let S = Clauses;
-  const Used = new RecursiveSet<Clause>();
+  const Used = new RecursiveSet<Clause>(); // AVL Tree overhead is okay here
+  
   while (true) {
-    const Units = new RecursiveSet<Clause>();
+    // PERFORMANCE WIN #3: Kein Random mehr.
+    // Suche Unit Clauses. 
+    let unitClause: Clause | null = null;
+    
+    // Wir iterieren durch S. Sobald wir eine Unit finden, die wir noch nicht hatten, nehmen wir sie.
+    // Wir bauen KEIN 'Units' Set mehr auf. Das spart O(N) Allokationen pro Loop.
     for (const C of S) {
-      const clause = C as Clause;
-      if (clause.size === 1 && !Used.has(clause)) {
-        Units.add(clause);
-      }
+        const clause = C as Clause;
+        if (clause.size === 1 && !Used.has(clause)) {
+            unitClause = clause;
+            break; // Sofort nehmen (Depth First Propagation)
+        }
     }
-    if (Units.isEmpty()) {
+
+    if (!unitClause) {
       break;
     }
-    const unit = arb(Units) as Clause;
-    Used.add(unit);
-    const l = arb(unit) as Literal;
+
+    Used.add(unitClause);
+    // pickFirst ist O(1) bis O(log K), arb war random
+    const l = pickFirst(unitClause) as Literal; 
     S = reduce(S, l);
   }
   return S;
@@ -148,11 +201,14 @@ export function solveRecursive(
 ): RecursiveSet<Clause> {
   const S = saturate(Clauses);
   const EmptyClause = new RecursiveSet<Literal>();
+  
+  // Quick Check: Contains empty clause?
   if (S.has(EmptyClause)) {
-    const Falsum = new RecursiveSet<Clause>();
-    Falsum.add(EmptyClause);
-    return Falsum;
+     // Wir können { {} } direkt zurückgeben
+     return RecursiveSet.fromSortedUnsafe([EmptyClause]) as unknown as RecursiveSet<Clause>;
   }
+
+  // Check if all units (Solution found)
   let allUnits = true;
   for (const C of S) {
     if ((C as Clause).size !== 1) {
@@ -160,26 +216,42 @@ export function solveRecursive(
       break;
     }
   }
-  if (allUnits) {
-    return S;
-  }
+  if (allUnits) return S;
+
   const l = selectLiteral(S, Variables, UsedVars);
   const lBar = complement(l);
   const p = extractVariable(l);
-  const nextUsedVars = UsedVars.union(new RecursiveSet<Variable>(p));
-  const unitL = new RecursiveSet<Clause>();
-  const cL = new RecursiveSet<Literal>();
-  cL.add(l);
-  unitL.add(cL);
-  const Result1 = solveRecursive(S.union(unitL), Variables, nextUsedVars);
+  
+  // Optimierung: Variables sind primitive Strings. 
+  // Das Erstellen eines Sets für Union ist okay, aber add ist billiger.
+  // const nextUsedVars = UsedVars.union(new RecursiveSet<Variable>(p));
+  // BESSER: copy + add
+  const nextUsedVars = UsedVars.mutableCopy();
+  nextUsedVars.add(p);
+
+  // PERFORMANCE WIN #4: S.union(unitL) ersetzen durch copy & add
+  // Branch 1: Setze l wahr
+  // Wir erstellen kein unitL Set mehr, sondern fügen direkt in S ein.
+  
+  // Klausel {l}
+  const cL = RecursiveSet.fromSortedUnsafe([l]) as Clause; 
+  
+  const S_plus_l = S.mutableCopy();
+  S_plus_l.add(cL); // Viel schneller als Union
+
+  const Result1 = solveRecursive(S_plus_l, Variables, nextUsedVars);
+  
   if (!Result1.has(EmptyClause)) {
     return Result1;
   }
-  const unitLBar = new RecursiveSet<Clause>();
-  const cLBar = new RecursiveSet<Literal>();
-  cLBar.add(lBar);
-  unitLBar.add(cLBar);
-  return solveRecursive(S.union(unitLBar), Variables, nextUsedVars);
+
+  // Branch 2: Setze lBar wahr
+  const cLBar = RecursiveSet.fromSortedUnsafe([lBar]) as Clause;
+  
+  const S_plus_lBar = S.mutableCopy();
+  S_plus_lBar.add(cLBar);
+
+  return solveRecursive(S_plus_lBar, Variables, nextUsedVars);
 }
 
 export function solve(Clauses: RecursiveSet<Clause>): RecursiveSet<Clause> {
