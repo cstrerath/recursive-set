@@ -5,7 +5,7 @@
  * Based on the provided notebook content.
  */
 
-import { RecursiveSet, Value } from '../src/trees';
+import { RecursiveSet, Value } from '../src/strict-tree';
 
 // --- Type Definitions ---
 
@@ -214,3 +214,4 @@ export function toString(S: RecursiveSet<Clause>, Simplified: RecursiveSet<Claus
   }
   return '{ ' + parts.join(', ') + ' }';
 }
+

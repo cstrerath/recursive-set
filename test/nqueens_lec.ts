@@ -1,6 +1,6 @@
 import { RecursiveSet } from '../src/strict-tree';
 // Wir nehmen an, dass diese Datei im selben Verzeichnis liegt
-import * as DP from './dp-jw'; 
+import * as DP from './dpll'; 
 
 // Falls du das in Node ausführst und tslab nicht hast, musst du diesen Import entfernen
 // und die showSolution Funktion unten anpassen.
@@ -285,17 +285,82 @@ function showSolution(Solution: RecursiveSet<Clause>, width = "50%") {
 // ============================================================================
 // 8. MAIN EXECUTION
 // ============================================================================
+// ============================================================================
+// BENCHMARK UTILS
+// ============================================================================
 
-// Führe 16-Queens aus
-const N = 16;
-console.time('queens');
-const Solution = queens(N);
-console.timeEnd('queens');
-
-if (Solution) {
-    // Zeige die rohen Literale
-    // for (const C of Solution) console.log(`${C}`);
+function calculateStats(times: number[]) {
+    const min = Math.min(...times);
+    const max = Math.max(...times);
+    const sum = times.reduce((a, b) => a + b, 0);
+    const avg = sum / times.length;
     
-    // Zeige das Brett
-    showSolution(Solution);
+    // Median berechnen
+    const sorted = [...times].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    const median = sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+
+    // Standardabweichung
+    const squareDiffs = times.map(t => Math.pow(t - avg, 2));
+    const avgSquareDiff = squareDiffs.reduce((a, b) => a + b, 0) / times.length;
+    const stdDev = Math.sqrt(avgSquareDiff);
+
+    return { min, max, avg, median, stdDev };
 }
+
+async function runBenchmark(n: number, iterations: number) {
+    console.log(`\n🚀 Starting Benchmark for ${n}-Queens (${iterations} iterations)`);
+    console.log("------------------------------------------------------------");
+
+    // 1. Clause Generation (wird meist nicht mitgemessen beim Solver-Vergleich)
+    console.log("Generating clauses...");
+    const Clauses = allClauses(n);
+    console.log(`Clauses generated. Size: ${Clauses.size}`);
+
+    // 2. Warmup Phase (Wichtig für JIT Optimierung!)
+    console.log("🔥 Warming up engine (5 runs)...");
+    for (let i = 0; i < 5; i++) {
+        DP.solve(Clauses); // Ergebnis ignorieren
+    }
+    console.log("Warmup complete.");
+
+    // 3. Measurement Phase
+    console.log("⏱️  Measuring...");
+    const durations: number[] = [];
+    
+    for (let i = 0; i < iterations; i++) {
+        const start = performance.now();
+        const Solution = DP.solve(Clauses);
+        const end = performance.now();
+        
+        // Safety check: Wurde eine Lösung gefunden? (Sollte immer ja sein bei 8)
+        // const isEmpty = Solution.has(new RecursiveSet<Literal>());
+        // if(isEmpty) console.warn(`Warn: Run ${i} found no solution (random logic?)`);
+
+        durations.push(end - start);
+        
+        // Kleiner Fortschrittsbalken
+        if (i % 10 === 0) process.stdout.write('.');
+    }
+    console.log("\n");
+
+    // 4. Stats Output
+    const stats = calculateStats(durations);
+
+    console.log("📊 RESULTS 📊");
+    console.log("============================");
+    console.log(`Runs:    ${iterations}`);
+    console.log(`Min:     ${stats.min.toFixed(2)} ms`);
+    console.log(`Max:     ${stats.max.toFixed(2)} ms`);
+    console.log(`Avg:     ${stats.avg.toFixed(2)} ms`);
+    console.log(`Median:  ${stats.median.toFixed(2)} ms  <-- WICHTIGSTER WERT`);
+    console.log(`StdDev:  ±${stats.stdDev.toFixed(2)} ms`);
+    console.log("============================");
+}
+
+// ============================================================================
+// RUN
+// ============================================================================
+
+// Führe Benchmark für 8 Damen mit 100 Durchläufen aus
+runBenchmark(8, 100);
