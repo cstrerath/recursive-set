@@ -1,4 +1,4 @@
-import { RecursiveSet } from '../src/index'; 
+import { RecursiveSet } from '../src/hash'; 
 import * as DP from './davis-putnam';
 
 /**

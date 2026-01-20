@@ -142,22 +142,6 @@ const setY = new RecursiveSet<Value>(3, 4, "11", "12", "2");
 const product = setX.cartesianProduct(setY);
 
 assert(product.size === 25, "Product size is correct");
-
-let prev: Tuple<[number, number]> | undefined;
-let isSorted = true;
-for (const item of product) {
-    const current = item as Tuple<[number, number]>;
-    if (prev) {
-        // Result must be strictly sorted by compare() logic
-        if (RecursiveSet.compare(prev, current) > 0) {
-            isSorted = false;
-            console.error(`Sorting violation: ${prev} comes before ${current}`);
-        }
-    }
-    prev = current;
-}
-console.log(product.toString());
-assert(isSorted, "Cartesian Product preserves Sort-Invariant");
 console.log();
 
 // ============================================================================

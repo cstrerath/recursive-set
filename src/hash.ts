@@ -1,28 +1,41 @@
 /**
- * @module recursive-set-pure-hash
+ * @module recursive-set
+ * @version 8.0.0
  * @description
- * MAXIMUM PERFORMANCE EDITION.
- * - Engine: "Compact Layout" Hash Table (Lecturer's Logic).
- * - Iteration: Raw, unsorted (O(N)).
- * - Lookups: Amortized O(1).
- * - API: Full RecursiveValue Interface compatibility.
+ * A specialized collection library supporting Value Semantics (Deep Equality)
+ * and recursive structures (Sets of Sets, Maps as keys).
+ * * Architecture:
+ * - Engine: "Compact Layout" Hash Table (Open Addressing, Linear Probing).
+ * - Storage: Dense arrays for data (iteration O(N)), Uint32Array for slots.
+ * - Hashing: Bitwise optimized (Murmur-inspired) + XOR mixing for Sets.
+ * - Contract: Accessing .hashCode freezes the object (Immutable-after-Hash).
  */
 
 // ============================================================================
 // 1. TYPE DEFINITIONS
 // ============================================================================
 
+/** Primitive types supported by the engine (string and number). */
 type Primitive = string | number;
 
-type Value = 
-    | Primitive 
-    | RecursiveSet<Value> 
-    | Tuple<Value[]> 
-    | RecursiveMap<Value, Value> 
-    | ReadonlyArray<Value>;
+/** * A Value can be a primitive or a structural object (Object/Set/Map/Tuple).
+ * Used recursively generics.
+ */
+type Value = Primitive | Structural;
 
+/**
+ * Interface for objects that support Value Semantics.
+ * Any object implementing this can be used as a key in RecursiveMap or value in RecursiveSet.
+ */
 interface Structural {
-    hashCode: number;
+    /** * Returns the hash code of the object. 
+     * SIDE EFFECT: This MUST freeze the object to ensure the hash remains stable.
+     */
+    readonly hashCode: number;
+
+    /** * Checks deep equality with another object.
+     * @param other The object to compare with.
+     */
     equals(other: unknown): boolean;
 }
 
@@ -30,6 +43,14 @@ interface Structural {
 // 2. HASH ENGINE (Bitwise Optimized)
 // ============================================================================
 
+/**
+ * Computes a 32-bit hash code for a given value.
+ * - Numbers: Integer bit mixing.
+ * - Strings: FNV-1a / Murmur-like iteration.
+ * - Objects: Delegates to `.hashCode`.
+ * * @param val The value to hash.
+ * @returns A 32-bit integer.
+ */
 function getHashCode(val: Value): number {
     if (typeof val === 'number') {
         let h = val | 0; 
@@ -47,20 +68,19 @@ function getHashCode(val: Value): number {
         return h;
     } 
     // Recursive Structures: Accessing .hashCode triggers Freeze!
-    if (val && typeof val === 'object' && 'hashCode' in val) {
-        return (val as any).hashCode;
+    if (val && typeof val === 'object') {
+        return val.hashCode;
     }
-    // Array Fallback
-    if (Array.isArray(val)) {
-        let h = 0x811c9dc5;
-        for (const item of val) {
-            h = Math.imul(h, 31) + getHashCode(item);
-        }
-        return h;
-    }
+
     return 0;
 }
 
+/**
+ * Determines deep equality between two values.
+ * @param a First value.
+ * @param b Second value.
+ * @returns True if values are structurally equal.
+ */
 function areEqual(a: Value, b: Value): boolean {
     if (a === b) return true;
     if (typeof a !== typeof b) return false;
@@ -70,22 +90,22 @@ function areEqual(a: Value, b: Value): boolean {
 
     // Deep Check
     if (typeof a === 'object' && a !== null && b !== null) {
-        if ('equals' in a) return (a as any).equals(b);
-        if (Array.isArray(a) && Array.isArray(b)) {
-            if (a.length !== b.length) return false;
-            for(let i=0; i<a.length; i++) {
-                if (!areEqual(a[i], b[i])) return false;
-            }
-            return true;
-        }
+        return a.equals(b);
     }
     return false;
 }
 
 /**
- * Global Comparator.
- * Necessary for strictly ordered output only when explicitly requested (e.g. toString),
- * or for resolving Hash Collisions deterministically.
+ * Global Comparator providing a Total Ordering.
+ * Necessary for strictly ordered output (e.g. toString) or deterministic collision resolution.
+ * * Logic:
+ * 1. Identity check.
+ * 2. Type segregation (Numbers < Strings < Objects).
+ * 3. Hash code comparison (O(1) fast path).
+ * 4. Deep recursive comparison (Collision resolution).
+ * * @param a First value.
+ * @param b Second value.
+ * @returns Negative if a < b, positive if a > b, 0 if equal.
  */
 function compare(a: Value, b: Value): number {
     if (a === b) return 0;
@@ -109,14 +129,12 @@ function compare(a: Value, b: Value): number {
     // COLLISION RESOLUTION (Slow, but rare)
     if (a instanceof RecursiveSet && b instanceof RecursiveSet) return a.compare(b);
     if (a instanceof Tuple && b instanceof Tuple) return compareSequences(a.raw, b.raw);
-    if (Array.isArray(a) && Array.isArray(b)) return compareSequences(a, b);
 
-        // Type Grouping
+    // Type Grouping for other objects
     const getScore = (v: Value) => {
-        if (Array.isArray(v)) return 1;
-        if (v instanceof Tuple) return 2;
-        if (v instanceof RecursiveSet) return 3;
-        if (v instanceof RecursiveMap) return 4;
+        if (v instanceof Tuple) return 1;
+        if (v instanceof RecursiveSet) return 2;
+        if (v instanceof RecursiveMap) return 3;
         return 99;
     };
     
@@ -125,6 +143,9 @@ function compare(a: Value, b: Value): number {
     return scoreA - scoreB;
 }
 
+/**
+ * Helper to compare sequences of values (used for Tuples and sorted Set iterations).
+ */
 function compareSequences(a: ReadonlyArray<Value>, b: ReadonlyArray<Value>): number {
     const len = a.length;
     if (len !== b.length) return len - b.length;
@@ -139,10 +160,21 @@ function compareSequences(a: ReadonlyArray<Value>, b: ReadonlyArray<Value>): num
 // 3. TUPLE (Immutable)
 // ============================================================================
 
+/**
+ * An immutable, fixed-length sequence of values.
+ * Useful as a composite key in Maps or for Cartesian products.
+ * @template T The type of the tuple elements array.
+ */
 class Tuple<T extends Value[]> implements Structural {
     readonly #elements: T;
     readonly #hashCode: number;
 
+    /**
+     * Creates a new Tuple.
+     * Copies the input array and freezes the internal store.
+     * Computes the hash code immediately.
+     * @param elements The elements to store.
+     */
     constructor(...elements: T) {
         // Defensive copy & Freeze
         this.#elements = elements.slice() as T;
@@ -160,6 +192,7 @@ class Tuple<T extends Value[]> implements Structural {
     get raw() { return this.#elements; }
     get hashCode() { return this.#hashCode; }
 
+    /** Returns the element at the specified index. */
     get(index: number): Value | undefined { return this.#elements[index]; }
 
     equals(other: unknown): boolean {
@@ -182,14 +215,33 @@ class Tuple<T extends Value[]> implements Structural {
 }
 
 // ============================================================================
-// 4. RECURSIVE MAP (Fixed with DELETE & CLONE)
+// 4. RECURSIVE MAP
 // ============================================================================
 
+/**
+ * A Hash Map implementation optimized for high-performance iteration and memory locality.
+ *
+ * Architecture: **Structure of Arrays (SoA)**
+ * Instead of storing objects like `{ key, value }`, this map maintains parallel arrays:
+ * - `_keys`: Stores the keys.
+ * - `_values`: Stores the values at the same index.
+ * - `_hashes`: Stores the pre-calculated hashes at the same index.
+ *
+ * This layout improves cache locality during iteration and reduces GC pressure.
+ *
+ * @template K Key type (must be a Value).
+ * @template V Value type (must be a Value).
+ */
 class RecursiveMap<K extends Value, V extends Value> implements Structural, Iterable<[K, V]> {
     
+    // Dense storage (Parallel Arrays)
     private _keys: K[] = [];
     private _values: V[] = [];
-    private _indices: Int32Array;
+    private _hashes: number[] = []; 
+    
+    // Sparse index table for O(1) lookup
+    private _indices: Uint32Array;
+    
     private _bucketCount = 16;
     private _mask = 15;
     
@@ -197,51 +249,91 @@ class RecursiveMap<K extends Value, V extends Value> implements Structural, Iter
     private _cachedHash: number | null = null;
 
     constructor() {
-        this._indices = new Int32Array(16).fill(-1);
+        this._indices = new Uint32Array(16);
     }
 
     get size() { return this._keys.length; }
     get isFrozen() { return this._isFrozen; }
     isEmpty(): boolean { return this._keys.length === 0; }
 
-    // --- Cloning (Scenario 4) ---
+    /**
+     * Creates a shallow mutable copy of this map.
+     * The copy is NOT frozen, even if the original was.
+     */
     mutableCopy(): RecursiveMap<K, V> {
         const copy = new RecursiveMap<K, V>();
+        copy.ensureCapacity(this.size);
+        // Fast copy: We can just copy the dense arrays directly if we wanted deeper optimization,
+        // but iterating is safe and correct.
         for (let i = 0; i < this._keys.length; i++) {
             copy.set(this._keys[i], this._values[i]);
         }
         return copy;
     }
 
+    /**
+     * Computes the order-independent hash code (XOR of Entry Hashes).
+     * @warning **Side Effect**: Freezes the map to guarantee hash stability.
+     * It explicitly iterates all keys to trigger their `hashCode` property, 
+     * ensuring nested structures are frozen as well.
+     */
     get hashCode(): number {
         if (this._cachedHash !== null) return this._cachedHash;
+        
         let h = 0;
         for (let i = 0; i < this._keys.length; i++) {
-            // Recurse hash on Key and Value -> Freezes them if they are Sets/Maps
-            const hk = getHashCode(this._keys[i]);
+            const k = this._keys[i];
+            const hk = this._hashes[i]; // Use cached hash for speed
+            
+            // Force freeze on the key if it's structural (nested freeze)
+            if (k && typeof k === 'object') {
+                k.hashCode; 
+            }
+
+            // Calculate value hash (freezes value if structural)
             const hv = getHashCode(this._values[i]);
-            const entryH = Math.imul(hk, 31) ^ hv;
-            h ^= entryH;
+            
+            // Mix key hash and value hash
+            h ^= Math.imul(hk, 31) ^ hv;
         }
+        
         this._cachedHash = h;
         this._isFrozen = true;
         return h;
     }
 
-    private resize() {
-        const oldKeys = this._keys;
-        this._bucketCount *= 2;
-        this._mask = this._bucketCount - 1;
-        this._indices = new Int32Array(this._bucketCount).fill(-1);
-
-        for (let i = 0; i < oldKeys.length; i++) {
-            const h = getHashCode(oldKeys[i]);
-            let idx = h & this._mask;
-            while (this._indices[idx] !== -1) idx = (idx + 1) & this._mask;
-            this._indices[idx] = i;
+    ensureCapacity(capacity: number) {
+        if (capacity * 1.33 > this._bucketCount) {
+            let target = this._bucketCount;
+            while (target * 0.75 < capacity) target *= 2;
+            
+            this._bucketCount = target;
+            this._mask = this._bucketCount - 1;
+            
+            // Rebuild index table (Re-hashing)
+            // The dense arrays (_keys, _values, _hashes) remain untouched!
+            const oldKeys = this._keys;
+            const oldHashes = this._hashes;
+            this._indices = new Uint32Array(this._bucketCount);
+            
+            for (let i = 0; i < oldKeys.length; i++) {
+                const h = oldHashes[i];
+                let idx = h & this._mask;
+                while (this._indices[idx] !== 0) idx = (idx + 1) & this._mask;
+                this._indices[idx] = i + 1;
+            }
         }
     }
 
+    private resize() {
+        this.ensureCapacity(this._keys.length + 1);
+    }
+
+    /**
+     * Associates the specified value with the specified key.
+     * Uses Linear Probing to find a slot in the `_indices` array.
+     * @complexity Amortized O(1).
+     */
     set(key: K, value: V): void {
         if (this._isFrozen) throw new Error("Frozen Map");
         if (this._keys.length >= this._bucketCount * 0.75) this.resize();
@@ -250,19 +342,27 @@ class RecursiveMap<K extends Value, V extends Value> implements Structural, Iter
         let idx = h & this._mask;
 
         while (true) {
-            const ptr = this._indices[idx];
-            if (ptr === -1) {
-                this._indices[idx] = this._keys.length;
+            const entry = this._indices[idx];
+            
+            // 1. Found empty slot -> Insert new entry
+            if (entry === 0) {
+                this._hashes.push(h);
                 this._keys.push(key);
                 this._values.push(value);
+                this._indices[idx] = this._keys.length; // 1-based index
                 this._cachedHash = null;
                 return;
             }
-            if (areEqual(this._keys[ptr], key)) {
+
+            // 2. Found existing slot -> Check for key equality (Update)
+            const ptr = entry - 1; // Convert to 0-based array index
+            if (this._hashes[ptr] === h && areEqual(this._keys[ptr], key)) {
                 this._values[ptr] = value;
                 this._cachedHash = null;
                 return;
             }
+            
+            // 3. Collision -> Probe next slot
             idx = (idx + 1) & this._mask;
         }
     }
@@ -271,14 +371,24 @@ class RecursiveMap<K extends Value, V extends Value> implements Structural, Iter
         const h = getHashCode(key);
         let idx = h & this._mask;
         while (true) {
-            const ptr = this._indices[idx];
-            if (ptr === -1) return undefined;
-            if (areEqual(this._keys[ptr], key)) return this._values[ptr];
+            const entry = this._indices[idx];
+            if (entry === 0) return undefined;
+            
+            const ptr = entry - 1;
+            if (this._hashes[ptr] === h && areEqual(this._keys[ptr], key)) return this._values[ptr];
+            
             idx = (idx + 1) & this._mask;
         }
     }
 
-    // --- DELETE IMPLEMENTATION ---
+    /**
+     * Removes a key-value pair.
+     * **Algorithm: Swap & Pop (Parallel)**
+     * Since we store data in 3 parallel arrays (`_keys`, `_values`, `_hashes`),
+     * removing an element requires moving the *last* element of ALL THREE arrays
+     * into the gap created by the removal.
+     * @complexity O(1)
+     */
     delete(key: K): boolean {
         if (this._isFrozen) throw new Error("Frozen Map");
         if (this.size === 0) return false;
@@ -287,21 +397,30 @@ class RecursiveMap<K extends Value, V extends Value> implements Structural, Iter
         let idx = h & this._mask;
 
         while (true) {
-            const ptr = this._indices[idx];
-            if (ptr === -1) return false;
+            const entry = this._indices[idx];
+            if (entry === 0) return false;
 
-            if (areEqual(this._keys[ptr], key)) {
+            const ptr = entry - 1; // The index in the dense arrays
+            if (this._hashes[ptr] === h && areEqual(this._keys[ptr], key)) {
                 this._cachedHash = null;
                 
+                // 1. Repair the hash table probe chain
                 this.removeIndex(idx);
 
+                // 2. Pop the last element from ALL parallel arrays
                 const lastKey = this._keys.pop()!;
                 const lastVal = this._values.pop()!;
+                const lastHash = this._hashes.pop()!;
 
+                // 3. If we didn't remove the very last element, move the popped 
+                //    element into the gap to keep arrays dense.
                 if (ptr < this._keys.length) {
                     this._keys[ptr] = lastKey;
                     this._values[ptr] = lastVal;
-                    this.updateIndexForKey(lastKey, this._keys.length, ptr);
+                    this._hashes[ptr] = lastHash;
+                    
+                    // Update the lookup table to point to the new location
+                    this.updateIndexForKey(lastHash, this._keys.length + 1, ptr + 1);
                 }
                 return true;
             }
@@ -309,8 +428,12 @@ class RecursiveMap<K extends Value, V extends Value> implements Structural, Iter
         }
     }
 
-    private updateIndexForKey(key: K, oldLoc: number, newLoc: number) {
-        let idx = getHashCode(key) & this._mask;
+    /**
+     * Updates the Lookup Table when an element moves in the dense storage.
+     * Necessary during the "Swap" phase of deletion.
+     */
+    private updateIndexForKey(hash: number, oldLoc: number, newLoc: number) {
+        let idx = hash & this._mask;
         while(true) {
             if (this._indices[idx] === oldLoc) {
                 this._indices[idx] = newLoc;
@@ -320,23 +443,29 @@ class RecursiveMap<K extends Value, V extends Value> implements Structural, Iter
         }
     }
 
+    /**
+     * Repairs the Open Addressing chain after an index is removed.
+     * Shifts subsequent colliding elements backward ("Robin Hood" style) 
+     * to fill the hole.
+     */
     private removeIndex(holeIdx: number): void {
         let i = (holeIdx + 1) & this._mask;
-        while (this._indices[i] !== -1) {
-            const ptr = this._indices[i];
-            const k = this._keys[ptr];
-            const h = getHashCode(k);
+        while (this._indices[i] !== 0) {
+            const entry = this._indices[i];
+            const ptr = entry - 1;
+            const h = this._hashes[ptr]; 
+            
             const ideal = h & this._mask;
             const distHole = (holeIdx - ideal + this._bucketCount) & this._mask;
             const distI = (i - ideal + this._bucketCount) & this._mask;
             
             if (distHole < distI) {
-                this._indices[holeIdx] = ptr;
+                this._indices[holeIdx] = entry;
                 holeIdx = i;
             }
             i = (i + 1) & this._mask;
         }
-        this._indices[holeIdx] = -1;
+        this._indices[holeIdx] = 0;
     }
 
     equals(other: unknown): boolean {
@@ -344,7 +473,6 @@ class RecursiveMap<K extends Value, V extends Value> implements Structural, Iter
         if (!(other instanceof RecursiveMap)) return false;
         if (this.size !== other.size) return false;
         if (this.hashCode !== other.hashCode) return false;
-        
         for(let i=0; i<this._keys.length; i++) {
             const val = other.get(this._keys[i]);
             if (val === undefined || !areEqual(this._values[i], val)) return false;
@@ -352,31 +480,40 @@ class RecursiveMap<K extends Value, V extends Value> implements Structural, Iter
         return true;
     }
 
-    compare(other: RecursiveMap<Value, Value>): number {
-        return this.hashCode - other.hashCode; 
-    }
-
+    compare(other: RecursiveMap<Value, Value>): number { return this.hashCode - other.hashCode; }
+    
     *[Symbol.iterator](): Iterator<[K, V]> {
-        for(let i=0; i<this._keys.length; i++) {
-            yield [this._keys[i], this._values[i]];
-        }
+        for(let i=0; i<this._keys.length; i++) yield [this._keys[i], this._values[i]];
     }
-
-    toString() {
-        return `Map{${this.size}}`;
-    }
+    
+    toString() { return `Map{${this.size}}`; }
     [Symbol.for('nodejs.util.inspect.custom')]() { return this.toString(); }
 }
 
 
 // ============================================================================
-// 5. RECURSIVE SET (High Performance Hash Table)
+// 5. RECURSIVE SET
 // ============================================================================
 
+/**
+ * A Hash Set implementation focused on high-performance iteration and Value Semantics.
+ *
+ * Architecture:
+ * - **Dense Storage**: Elements are stored in a contiguous array (`_values`) for O(n) iteration.
+ * - **Sparse Lookup**: A separate `Uint32Array` (`_indices`) maps hashes to indices in the dense array.
+ * - **Open Addressing**: Uses linear probing for collision resolution.
+ *
+ * @template T The type of elements in the set.
+ */
 class RecursiveSet<T extends Value> implements Structural, Iterable<T> {
     
+    // Dense arrays for fast iteration and data locality
     private _values: T[] = [];
-    private _indices: Int32Array;
+    private _hashes: number[] = [];
+    
+    // Sparse array for O(1) lookups (stores index + 1, where 0 means empty)
+    private _indices: Uint32Array; 
+    
     private _bucketCount: number;
     private _mask: number;
     private _xorHash: number = 0;
@@ -392,8 +529,7 @@ class RecursiveSet<T extends Value> implements Structural, Iterable<T> {
             while (this._bucketCount < target) this._bucketCount <<= 1;
         }
         this._mask = this._bucketCount - 1;
-        this._indices = new Int32Array(this._bucketCount).fill(-1);
-
+        this._indices = new Uint32Array(this._bucketCount);
         for (const item of initialData) this.add(item);
     }
 
@@ -403,29 +539,48 @@ class RecursiveSet<T extends Value> implements Structural, Iterable<T> {
     get isFrozen(): boolean { return this._isFrozen; }
     isEmpty(): boolean { return this._values.length === 0; }
 
+    /**
+     * Returns the order-independent hash code (XOR sum).
+     * @warning **Side Effect**: Freezes the set to guarantee hash stability for use as a map key.
+     */
     get hashCode(): number {
         this._isFrozen = true;
         return this._xorHash;
     }
 
-    private resize(): void {
-        const oldValues = this._values;
-        this._bucketCount *= 2;
-        this._mask = this._bucketCount - 1;
-        this._indices = new Int32Array(this._bucketCount).fill(-1);
-
-        for (let i = 0; i < oldValues.length; i++) {
-            const val = oldValues[i];
-            const h = getHashCode(val);
-            let idx = h & this._mask;
-            while (this._indices[idx] !== -1) idx = (idx + 1) & this._mask;
-            this._indices[idx] = i; 
+    ensureCapacity(capacity: number) {
+        if (capacity * 1.33 > this._bucketCount) {
+            let target = this._bucketCount;
+            while (target * 0.75 < capacity) target *= 2;
+            
+            this._bucketCount = target;
+            this._mask = this._bucketCount - 1;
+            
+            // Rebuild the lookup table (Re-hashing)
+            // Note: We don't need to touch _values or _hashes, just where to find them.
+            const oldValues = this._values;
+            const oldHashes = this._hashes;
+            this._indices = new Uint32Array(this._bucketCount);
+            
+            for (let i = 0; i < oldValues.length; i++) {
+                const h = oldHashes[i];
+                let idx = h & this._mask;
+                while (this._indices[idx] !== 0) idx = (idx + 1) & this._mask;
+                this._indices[idx] = i + 1;
+            }
         }
     }
 
-    private updateIndexForValue(val: T, oldLoc: number, newLoc: number): void {
-        const h = getHashCode(val);
-        let idx = h & this._mask;
+    private resize(): void {
+        this.ensureCapacity(this._values.length + 1); // Reuse logic, but force growth
+    }
+
+    /**
+     * Updates the Lookup Table when an element moves in the Dense Array.
+     * This is crucial for the "Swap & Pop" removal strategy.
+     */
+    private updateIndexForValue(hash: number, oldLoc: number, newLoc: number): void {
+        let idx = hash & this._mask;
         while (true) {
             if (this._indices[idx] === oldLoc) {
                 this._indices[idx] = newLoc;
@@ -435,22 +590,34 @@ class RecursiveSet<T extends Value> implements Structural, Iterable<T> {
         }
     }
 
+    /**
+     * Repairs the Open Addressing Probe Chain.
+     * * When an index is removed, we cannot simply set it to 0, because it might break
+     * the search path for other elements that collided and were placed further down.
+     * This algorithm shifts subsequent elements back into the "hole" if they belong 
+     * closer to their ideal hash bucket.
+     * * @param holeIdx The index in the `_indices` array that is being cleared.
+     */
     private removeIndex(holeIdx: number): void {
         let i = (holeIdx + 1) & this._mask;
-        while (this._indices[i] !== -1) {
-            const valPtr = this._indices[i];
-            const val = this._values[valPtr];
-            const h = getHashCode(val);
+        while (this._indices[i] !== 0) {
+            const entry = this._indices[i];
+            const valPtr = entry - 1;
+            const h = this._hashes[valPtr];
+            
             const idealIdx = h & this._mask;
             const distToHole = (holeIdx - idealIdx + this._bucketCount) & this._mask;
             const distToI = (i - idealIdx + this._bucketCount) & this._mask;
+            
+            // If the element at 'i' is logically "farther" from its ideal spot than 
+            // the hole is, we shift it into the hole to close the gap.
             if (distToHole < distToI) {
-                this._indices[holeIdx] = valPtr;
+                this._indices[holeIdx] = entry;
                 holeIdx = i;
             }
             i = (i + 1) & this._mask;
         }
-        this._indices[holeIdx] = -1;
+        this._indices[holeIdx] = 0;
     }
 
     add(e: T): void {
@@ -461,15 +628,21 @@ class RecursiveSet<T extends Value> implements Structural, Iterable<T> {
         let idx = h & this._mask;
 
         while (true) {
-            const valIndex = this._indices[idx];
-            if (valIndex === -1) {
-                this._indices[idx] = this._values.length;
+            const entry = this._indices[idx];
+            if (entry === 0) {
+                // Found empty slot: Insert new value
+                this._hashes.push(h);
                 this._values.push(e);
-                this._xorHash ^= h;
+                this._indices[idx] = this._values.length; // Store 1-based index
+                this._xorHash ^= h; 
                 return;
             }
-            if (areEqual(this._values[valIndex], e)) return; 
-            idx = (idx + 1) & this._mask;
+            
+            // Collision handling: Check if it's the same existing item
+            const valIndex = entry - 1;
+            if (this._hashes[valIndex] === h && areEqual(this._values[valIndex], e)) return; 
+            
+            idx = (idx + 1) & this._mask; // Linear probe
         }
     }
 
@@ -477,13 +650,27 @@ class RecursiveSet<T extends Value> implements Structural, Iterable<T> {
         const h = getHashCode(element);
         let idx = h & this._mask;
         while (true) {
-            const valIndex = this._indices[idx];
-            if (valIndex === -1) return false;
-            if (areEqual(this._values[valIndex], element)) return true;
+            const entry = this._indices[idx];
+            if (entry === 0) return false;
+            
+            const valIndex = entry - 1;
+            if (this._hashes[valIndex] === h && areEqual(this._values[valIndex], element)) return true;
+            
             idx = (idx + 1) & this._mask;
         }
     }
 
+    /**
+     * Removes an element using "Swap & Pop".
+     * * Algorithm:
+     * 1. Locate the element in the hash table (`_indices`).
+     * 2. Repair the hash table probe chain (`removeIndex`).
+     * 3. Remove the element from the dense array (`_values`):
+     * - Instead of splicing (which is O(N)), we move the *last* element
+     * of the array into the slot of the removed element.
+     * - We then update the hash table to point to this new location.
+     * * Complexity: O(1)
+     */
     remove(e: T): void {
         if (this._isFrozen) throw new Error("Frozen Set modified.");
         if (this._values.length === 0) return;
@@ -492,16 +679,27 @@ class RecursiveSet<T extends Value> implements Structural, Iterable<T> {
         let idx = h & this._mask;
 
         while (true) {
-            const valIndex = this._indices[idx];
-            if (valIndex === -1) return;
+            const entry = this._indices[idx];
+            if (entry === 0) return; // Element not found
 
-            if (areEqual(this._values[valIndex], e)) {
+            const valIndex = entry - 1;
+            if (this._hashes[valIndex] === h && areEqual(this._values[valIndex], e)) {
                 this._xorHash ^= h;
+                
+                // 1. Remove from Lookup Table (and fix probe chain)
                 this.removeIndex(idx);
+                
+                // 2. Remove from Dense Storage (Swap & Pop)
                 const lastVal = this._values.pop()!;
+                const lastHash = this._hashes.pop()!;
+
+                // If the element we removed wasn't the last one, 
+                // fill the gap with the last element to keep array dense.
                 if (valIndex < this._values.length) {
                     this._values[valIndex] = lastVal;
-                    this.updateIndexForValue(lastVal, this._values.length, valIndex);
+                    this._hashes[valIndex] = lastHash;
+                    // Important: Update lookup table to point to the new location of lastVal
+                    this.updateIndexForValue(lastHash, this._values.length + 1, valIndex + 1);
                 }
                 return;
             }
@@ -511,7 +709,17 @@ class RecursiveSet<T extends Value> implements Structural, Iterable<T> {
 
     clone(): RecursiveSet<T> {
         const s = new RecursiveSet<T>();
-        for (const v of this._values) s.add(v);
+        if (s._bucketCount !== this._bucketCount) s.ensureCapacity(this.size);
+        
+        // Fast path: Block copy if structure matches
+        if (s._bucketCount === this._bucketCount) {
+            s._indices.set(this._indices);
+            s._values = this._values.slice();
+            s._hashes = this._hashes.slice();
+            s._xorHash = this._xorHash;
+        } else {
+             for(const v of this._values) s.add(v);
+        }
         return s;
     }
 
@@ -523,26 +731,22 @@ class RecursiveSet<T extends Value> implements Structural, Iterable<T> {
 
     intersection(other: RecursiveSet<T>): RecursiveSet<T> {
         const res = new RecursiveSet<T>();
+        // Optimization: Iterate over the smaller set
         const [small, large] = this.size < other.size ? [this, other] : [other, this];
-        for (const item of small) {
-            if (large.has(item)) res.add(item);
-        }
+        for (const item of small) { if (large.has(item)) res.add(item); }
         return res;
     }
 
     symmetricDifference(other: RecursiveSet<T>): RecursiveSet<T> {
         const res = new RecursiveSet<T>();
-        for (const item of this) {
-            if (!other.has(item)) res.add(item);
-        }
-        for (const item of other) {
-            if (!this.has(item)) res.add(item);
-        }
+        for (const item of this) { if (!other.has(item)) res.add(item); }
+        for (const item of other) { if (!this.has(item)) res.add(item); }
         return res;
     }
 
     cartesianProduct<U extends Value>(other: RecursiveSet<U>): RecursiveSet<Tuple<[T, U]>> {
         const result = new RecursiveSet<Tuple<[T, U]>>();
+        result.ensureCapacity(this.size * other.size);
         for (const a of this) {
             for (const b of other) {
                 result.add(new Tuple(a, b));
@@ -551,10 +755,14 @@ class RecursiveSet<T extends Value> implements Structural, Iterable<T> {
         return result;
     }
 
+    /** * Computes the Power Set (Set of all subsets).
+     * @warning **Complexity O(2^N)**: Grows exponentially. Use only for small sets (N < 20).
+     */
     powerset(): RecursiveSet<RecursiveSet<T>> {
         const n = this._values.length;
-        const result = new RecursiveSet<RecursiveSet<T>>();
         const max = 1 << n;
+        const result = new RecursiveSet<RecursiveSet<T>>();
+        result.ensureCapacity(max);
         
         for (let i = 0; i < max; i++) {
             const subset = new RecursiveSet<T>();
@@ -570,39 +778,29 @@ class RecursiveSet<T extends Value> implements Structural, Iterable<T> {
 
     pickRandom(): T | undefined {
         if (this._values.length === 0) return undefined;
-        const idx = Math.floor(Math.random() * this._values.length);
-        return this._values[idx];
+        return this._values[Math.floor(Math.random() * this._values.length)];
     }
-
-    [Symbol.iterator](): Iterator<T> {
-        return this._values[Symbol.iterator]();
-    }
-
+    
+    [Symbol.iterator](): Iterator<T> { return this._values[Symbol.iterator](); }
+    
     compare(other: RecursiveSet<Value>): number {
         if (this === other) return 0;
-        const h1 = this.hashCode; 
-        const h2 = other.hashCode;
-        if (h1 !== h2) return h1 - h2;
-
+        if (this.hashCode !== other.hashCode) return this.hashCode - other.hashCode;
         const sortFn = (a: Value, b: Value) => compare(a, b);
         const arrA = [...this._values].sort(sortFn);
-        const arrB = [...(other as RecursiveSet<Value>)._values].sort(sortFn);
-        
+        const arrB = [...other._values].sort(sortFn);
         return compareSequences(arrA, arrB);
     }
-
+    
     equals(other: unknown): boolean {
         if (this === other) return true;
         if (!(other instanceof RecursiveSet)) return false;
         if (this.size !== other.size) return false;
         if (this.hashCode !== other.hashCode) return false;
-        
-        for(const v of this._values) {
-            if (!other.has(v)) return false;
-        }
+        for(const v of this._values) { if (!other.has(v)) return false; }
         return true;
     }
-
+    
     toString(): string {
         const sorted = [...this._values].sort((a,b) => compare(a,b));
         return `{${sorted.map(String).join(', ')}}`;
@@ -614,7 +812,10 @@ class RecursiveSet<T extends Value> implements Structural, Iterable<T> {
 // 6. PUBLIC EXPORTS
 // ============================================================================
 
+/** Creates an empty RecursiveSet. */
 function emptySet<T extends Value>() { return new RecursiveSet<T>(); }
+
+/** Creates a RecursiveSet containing a single element. */
 function singleton<T extends Value>(el: T) { return new RecursiveSet<T>(el); }
 
 // Alias for public use
@@ -629,7 +830,7 @@ export {
     Structural,
     emptySet,
     singleton,
-    hashValue, // Needed for Test Suite
-    compare,   // Optional, but good for diagnostics
+    hashValue,
+    compare,
     getHashCode
 };

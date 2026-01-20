@@ -58,38 +58,6 @@ test("Standard DFA Transitions (Tuple Keys)", () => {
 });
 
 // =========================================================
-// SCENARIO 1b: The Standard DFA (Array Keys)
-// Delta: [q, c] -> q'
-// =========================================================
-test("Standard DFA Transitions (Array Keys)", () => {
-    // Map<[State, Char], State>
-    // Beachte: Wir nutzen hier ReadonlyArray bzw. einfach Array im Generischen Typ
-    const delta = new RecursiveMap<ReadonlyArray<number | string>, number>();
-
-    // States: 0, 1, 2
-    // Transitions: [0, 'a'] -> 1, [0, 'b'] -> 2
-
-    // WICHTIG: Das sind ganz normale JS Arrays!
-    const k1 = [0, 'a'];
-    const k2 = [0, 'b'];
-
-    delta.set(k1, 1);
-    delta.set(k2, 2);
-
-    // Assert Size
-    assert(delta.size === 2, "Map should have 2 transitions");
-
-    // Assert Lookup with FRESH instances (Value Equality)
-    // Hier erstellen wir neue Array-Literale [0, 'a'] - neue Referenz im Speicher!
-    // Die Map muss per Hash/Deep-Compare erkennen, dass es "dasselbe" ist.
-    assert(delta.get([0, 'a']) === 1, "Lookup [0, 'a'] failed");
-    assert(delta.get([0, 'b']) === 2, "Lookup [0, 'b'] failed");
-
-    // Assert Miss
-    assert(delta.get([0, 'c']) === undefined, "Lookup [0, 'c'] should be undefined");
-});
-
-// =========================================================
 // SCENARIO 2: NFA to DFA Conversion (Set Keys)
 // The keys of the DFA transition table are SETS of NFA states.
 // Delta: (Set<q_nfa>, c) -> Set<q_nfa>
@@ -219,7 +187,7 @@ test("Immutability Contract", () => {
         // Der Map.hashCode ruft Key.hashCode auf. Ergo: setKey MUSS frozen sein.
         throw new Error("Mutation succeeded but should have failed");
     } catch (e : any) {
-        assert(e.message.includes("frozen"), "Error should be about frozen state");
+        assert(e.message.includes("Frozen"), "Error should be about frozen state");
     }
 });
 
