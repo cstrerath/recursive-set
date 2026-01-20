@@ -1,4 +1,4 @@
-import { RecursiveMap, RecursiveSet, Tuple, Value } from '../src/strict-tree';
+import { RecursiveMap, RecursiveSet, Tuple, Value } from '../src/hash';
 
 // --- Simple Test Runner ---
 let passed = 0;
