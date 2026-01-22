@@ -1,7 +1,5 @@
-"use strict";
-
 /**
- * @file Test Suite for RecursiveSet v7.0.0
+ * @file Test Suite for RecursiveSet v8.0.0
  * @description
  * Comprehensive integration tests covering:
  * - Primitive & Object Semantics
@@ -11,7 +9,7 @@
  * - Security & Lifecycle constraints (Freeze-on-Hash)
  */
 
-import { RecursiveSet, emptySet, Tuple } from '../src/index';
+import { RecursiveSet, Value, hashValue, emptySet, Tuple } from '../src/index';
 
 // ============================================================================
 // CONFIGURATION & UTILITIES
@@ -118,44 +116,38 @@ console.log();
 // 3. DEEP STRUCTURAL EQUALITY
 // ============================================================================
 console.log('--- Test 3: Deep Structural Equality ---');
-const A = new RecursiveSet(new RecursiveSet(1, 2), new RecursiveSet(3));
-const B = new RecursiveSet(new RecursiveSet(3), new RecursiveSet(2, 1));
+
+// We use <Value> to force the compiler to see these as compatible types
+const A = new RecursiveSet<Value>(
+    new RecursiveSet<Value>(1, 2), 
+    new RecursiveSet<Value>(3)
+);
+
+const B = new RecursiveSet<Value>(
+    new RecursiveSet<Value>(3), 
+    new RecursiveSet<Value>(2, 1)
+);
 
 assert(A.equals(B), "Sets are equal regardless of insertion order");
-console.log();
+console.log('Test Passed: Nested sets compare correctly.');
 
 // ============================================================================
 // 4. CARTESIAN PRODUCT (INVARIANT CHECK)
 // ============================================================================
 console.log('--- Test 4: Cartesian Product (Sorted Invariant) ---');
-const setX = new RecursiveSet(1, 2);
-const setY = new RecursiveSet(3, 4);
+const setX = new RecursiveSet<Value>(1, 2, "ia", "i", 4);
+const setY = new RecursiveSet<Value>(3, 4, "11", "12", "2");
 const product = setX.cartesianProduct(setY);
 
-assert(product.size === 4, "Product size is correct");
-
-let prev: Tuple<[number, number]> | undefined;
-let isSorted = true;
-for (const item of product) {
-    const current = item as Tuple<[number, number]>;
-    if (prev) {
-        // Result must be strictly sorted by compare() logic
-        if (RecursiveSet.compare(prev, current) > 0) {
-            isSorted = false;
-            console.error(`Sorting violation: ${prev} comes before ${current}`);
-        }
-    }
-    prev = current;
-}
-assert(isSorted, "Cartesian Product preserves Sort-Invariant");
+assert(product.size === 25, "Product size is correct");
 console.log();
 
 // ============================================================================
 // 5. PURE OPERATIONS
 // ============================================================================
 console.log('--- Test 5: Immutability of Operations ---');
-const base = new RecursiveSet(1);
-const unionResult = base.union(new RecursiveSet(2));
+const base = new RecursiveSet<Value>(1);
+const unionResult = base.union(new RecursiveSet<Value>(2));
 
 assert(base.size === 1, "Original set remains unmodified");
 assert(unionResult.size === 2, "New set contains result");
@@ -166,19 +158,8 @@ console.log();
 // ============================================================================
 console.log('--- Test 6: Strict Type Validation (Performance Mode) ---');
 
-const setArr = new RecursiveSet<number[]>();
-setArr.add([1, 2]);
-assert(setArr.size === 1, "Plain Arrays are SUPPORTED");
+console.log('Strict in Jupyter');
 
-// v7.0.0 accepts objects (Garbage In -> Garbage Out) for speed
-const setObj = new RecursiveSet<object>();
-try {
-    // @ts-ignore
-    setObj.add({ a: 1 });
-    console.log("[INFO] Plain Objects are accepted (No Validation Overhead)");
-} catch (e) {
-    assert(false, "Should not throw in Unsafe Mode");
-}
 console.log();
 
 // ============================================================================
@@ -210,9 +191,10 @@ console.log();
 // 9. POWER SET
 // ============================================================================
 console.log('--- Test 9: Power Set ---');
-const baseSet = new RecursiveSet(1, 2, 3);
+const baseSet = new RecursiveSet<Value>(1, 3, 11, 25);
 const pSet = baseSet.powerset();
-assert(pSet.size === 8, "Power set size is correct (8)");
+console.log(pSet.toString());
+assert(pSet.size === 16, "Power set size is correct (16)");
 assert(pSet.has(emptySet<number>()), "Contains empty set");
 console.log();
 
@@ -220,26 +202,61 @@ console.log();
 // 10. SYMMETRIC DIFFERENCE
 // ============================================================================
 console.log('--- Test 10: Symmetric Difference ---');
-const setA = new RecursiveSet(1, 2);
-const setB = new RecursiveSet(2, 3);
+const setA = new RecursiveSet<Value>(1, 2);
+const setB = new RecursiveSet<Value>(2, 3);
 const symDiff = setA.symmetricDifference(setB);
 assert(symDiff.size === 2, "Result size correct {1, 3}");
 assert(symDiff.has(1) && symDiff.has(3), "Correct elements");
 console.log();
 
 // ============================================================================
-// 11. RECURSION DEPTH
+// 11. RECURSION DEPTH (DEBUG MODE)
 // ============================================================================
-console.log('--- Test 11: Recursion Depth ---');
+console.log('--- Test 11: Recursion Depth (Debug) ---');
+
+// Helper to print first 8 chars of hash (hex) for readability
+const fmtHash = (o: Value) => `0x${hashValue(o).toString(16).toUpperCase().slice(0, 8)}`;
+
 type NestedSet = RecursiveSet<string | NestedSet>;
 let current: NestedSet = new RecursiveSet("bottom");
 const onionBag = new RecursiveSet<NestedSet>();
-for(let i=0; i<20; i++) {
+
+console.log(`Start: Current Hash=${fmtHash(current)}`);
+
+for(let i = 0; i < 20; i++) {
+    // 1. Add current "onion layer" to the bag
     onionBag.add(current);
-    current = new RecursiveSet(current); 
+    
+    // 2. Measure state AFTER add
+    const sizeAfterAdd = onionBag.size;
+    const expectedSize = i + 1;
+    
+    // 3. Wrap current in a new layer
+    const nextLayer = new RecursiveSet(current);
+    
+    // 4. Log Debug Info
+    console.log(
+        `[Iter ${i + 1}] ` +
+        `Added Hash=${fmtHash(current)} | ` +
+        `Bag Size=${sizeAfterAdd}/${expectedSize} | ` +
+        `Next Hash=${fmtHash(nextLayer)} | ` +
+        `Diff=${sizeAfterAdd === expectedSize ? 'OK' : 'FAIL'}`
+    );
+
+    // Stop if we hit a collision immediately to avoid spamming 20 lines of fail
+    if (sizeAfterAdd !== expectedSize) {
+        console.error("!!! CRITICAL FAILURE: Element was considered duplicate !!!");
+        console.log("Collision detected between:");
+        console.log("1. Inserted Element:", current.toString());
+        console.log("2. Comparison against Bag contents...");
+        break;
+    }
+
+    current = nextLayer;
 }
-assert(onionBag.size === 20, "Distinguishes 20 levels of recursion");
-console.log();
+
+assert(onionBag.size === 20, `Expected size 20, got ${onionBag.size}`);
+console.log('\nResult: Test Completed.');
 
 // ============================================================================
 // 12. CONTRACT DEMO: NAN/INFINITY
@@ -253,7 +270,7 @@ console.log();
 // 13. ITERATOR SEMANTICS
 // ============================================================================
 console.log('--- Test 13: Iterator Semantics (Robust Check) ---');
-const modSet = new RecursiveSet(1, 2);
+const modSet = new RecursiveSet<Value>(1, 2);
 let seen99 = false;
 try {
     for (const item of modSet) {
@@ -276,7 +293,7 @@ console.log();
 // 14. COPY-ON-WRITE
 // ============================================================================
 console.log('--- Test 14: Copy-on-Write (Shallow Clone) ---');
-const original = new RecursiveSet(1);
+const original = new RecursiveSet<Value>(1);
 const copy = original.clone();
 copy.add(2);
 assert(original.size === 1, "Original unmodified");
@@ -305,21 +322,6 @@ const safeArray = [1, 2, 3];
 const safeTuple = new Tuple(...safeArray);
 safeArray.push(4);
 assert(safeTuple.length === 3, "Tuple ignores external array mutation (Safe Copy)");
-
-// Check runtime freezing
-const internalValues = safeTuple.raw as any; 
-let pushThrew = false;
-try {
-    internalValues.push(666);
-} catch(e) {
-    pushThrew = true;
-}
-
-if (pushThrew) {
-    console.log("[PASS] Tuple is frozen (Safe Mode)");
-} else {
-    console.log("[WARN] Tuple is mutable (Unsafe Performance Mode)");
-}
 
 const bigIntSet = new RecursiveSet<number>();
 bigIntSet.add(-1);
@@ -355,76 +357,14 @@ console.log();
 // 18. PROPERTY BASED TESTING (SEEDED FUZZER)
 // ============================================================================
 console.log('--- Test 18: Property Based Testing (Contract Compliant) ---');
-
-function randomInput(): number | string | Tuple<any[]> {
-    const r = random();
-    // STRICT CONTRACT: No Infinity, No NaN
-    if (r < 0.2) return Number.MAX_SAFE_INTEGER;
-    if (r < 0.5) return Math.floor(random() * 10000) - 5000;
-    if (r < 0.7) return "str" + Math.floor(random() * 100);
-    return new Tuple(Math.floor(random() * 10)); 
-}
-
-let antisymmetryPass = true;
-let transitivityPass = true;
-let reflexivityPass = true;
-let totalityPass = true;
-let symmetryPass = true;
-
-for(let i=0; i<1000; i++) {
-    const a = randomInput();
-    const b = randomInput();
-    const c = randomInput();
-
-    const cmpAB = RecursiveSet.compare(a, b);
-    const cmpBA = RecursiveSet.compare(b, a);
-    const cmpBC = RecursiveSet.compare(b, c);
-    const cmpAC = RecursiveSet.compare(a, c);
-
-    // 1. Reflexivity: a == a
-    if (RecursiveSet.compare(a, a) !== 0) {
-        console.error(`Reflexivity fail at i=${i}:`, fmt(a));
-        reflexivityPass = false;
-    }
-
-    // 2. Totality: Result must be finite (not NaN/Infinity)
-    // (RecursiveSet.compare uses a - b for numbers, so any finite diff is valid, not just -1/0/1)
-    if (!Number.isFinite(cmpAB)) {
-        console.error(`Totality fail at i=${i}:`, fmt(a), fmt(b));
-        totalityPass = false;
-    }
-
-    // 3. Antisymmetry: sign(a,b) == -sign(b,a)
-    if (cmpAB !== 0 && Math.sign(cmpAB) !== -Math.sign(cmpBA)) {
-        console.error(`Antisymmetry fail at i=${i}: A=${fmt(a)} B=${fmt(b)}`);
-        antisymmetryPass = false;
-    }
-
-    // 4. Symmetry of Equality
-    if (cmpAB === 0 && cmpBA !== 0) {
-        console.error(`Symmetry fail at i=${i}: A=${fmt(a)} B=${fmt(b)}`);
-        symmetryPass = false;
-    }
-
-    // 5. Transitivity
-    if (cmpAB < 0 && cmpBC < 0 && cmpAC >= 0) {
-        console.error(`Transitivity fail at i=${i} (<): A=${fmt(a)} B=${fmt(b)} C=${fmt(c)}`);
-        transitivityPass = false;
-    }
-}
-
-assert(reflexivityPass, "Comparator Reflexivity holds");
-assert(totalityPass, "Comparator Totality holds");
-assert(antisymmetryPass, "Comparator Antisymmetry holds");
-assert(symmetryPass, "Comparator Symmetry (Equals) holds");
-assert(transitivityPass, "Comparator Transitivity holds");
+console.log('--- No longer supports compare ---');
 console.log();
 
 // ============================================================================
 // 19. TRANSITIVE FREEZE
 // ============================================================================
 console.log('--- Test 19: Transitive Freeze Semantics ---');
-const innerMutable = new RecursiveSet(1);
+const innerMutable = new RecursiveSet<Value>(1);
 const outerMutable = new RecursiveSet(innerMutable);
 
 const _ = outerMutable.hashCode; // Should trigger recursion
@@ -437,7 +377,6 @@ try {
 }
 assert(innerThrew, "Computing hash of Outer Set recursively freezes Inner Set");
 console.log();
-
 
 // ============================================================================
 // FINAL REPORT
