@@ -37,7 +37,6 @@ class Constant extends Tuple<[ConstOp]> {
 class Negation<T extends Formula = Formula> extends Tuple<['¬', T]> {
     constructor(phi: T) { super('¬', phi); }
     
-    // Durch das Generic T weiß TS jetzt: Wenn T eine Variable ist, kommt hier Variable raus!
     get phi(): T { return this.get(1); }
 }
 
@@ -169,7 +168,6 @@ class LogicParser {
         if (!op) return;
 
         // TypeScript Narrowing Magic:
-        // Durch den Switch weiß TS in jedem Block genau, was 'op' ist.
         switch (op) {
             case '¬': {
                 const arg = this.argumentsList.pop();

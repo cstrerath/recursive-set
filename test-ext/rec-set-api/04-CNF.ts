@@ -157,12 +157,12 @@ function neg(f: Formula): NNF {
     // 4. De Morgan's Laws
     if (f instanceof BinaryFormula) {
         // ¬(A ∧ B) -> ¬A ∨ ¬B
-        if (f.operator === '∧') return new NNFDisjunction(pushNegation(f.left), pushNegation(f.right));
+        if (f.operator === '∧') return new NNFDisjunction(neg(f.left), neg(f.right));
         // ¬(A ∨ B) -> ¬A ∧ ¬B
-        if (f.operator === '∨') return new NNFConjunction(pushNegation(f.left), pushNegation(f.right));
+        if (f.operator === '∨') return new NNFConjunction(neg(f.left), neg(f.right));
     }
     
-    throw new Error("Unexpected formula type in pushNegation.");
+    throw new Error("Unexpected formula type in neg.");
 }
 
 /**

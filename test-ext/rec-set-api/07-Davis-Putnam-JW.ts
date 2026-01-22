@@ -222,7 +222,7 @@ function toString(S: CNF, Simplified: CNF): string {
     if (Simplified.has(EmptyClause)) return "UNSAT";
 
     const parts: string[] = [];
-    const sorted = Array.from(Simplified).sort((a,b) => RecursiveSet.compare(a, b));
+    const sorted = Array.from(Simplified).sort(RecursiveSet.compareVisual);
     
     for (const C of sorted) {
         parts.push(literal_to_str(C));
