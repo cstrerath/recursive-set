@@ -1,4 +1,4 @@
-import { RecursiveMap, RecursiveSet, Tuple, Value } from '../src/hash';
+import { RecursiveMap, RecursiveSet, Tuple, Value } from '../src/index';
 
 // --- Simple Test Runner ---
 let passed = 0;

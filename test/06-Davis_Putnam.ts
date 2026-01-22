@@ -1,4 +1,4 @@
-import { RecursiveSet, Value } from './recursive-set';
+import { RecursiveSet, Value } from '../src/index';
 import { Variable, LogicParser } from './Propositional-Logic-Parser';
 import { NNFNegation, Literal, Clause, CNF, normalize } from './04-CNF'; 
 

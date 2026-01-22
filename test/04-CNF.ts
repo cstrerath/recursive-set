@@ -1,5 +1,5 @@
 import { LogicParser, Formula, Variable, Constant, Negation, BinaryFormula, Operator } from './Propositional-Logic-Parser';
-import { RecursiveSet } from './recursive-set';
+import { RecursiveSet } from '../src/index';
 
 // ============================================================================
 // 1. Strict NNF Domain Classes

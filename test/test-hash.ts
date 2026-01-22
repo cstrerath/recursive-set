@@ -1,5 +1,3 @@
-"use strict";
-
 /**
  * @file Test Suite for RecursiveSet v8.0.0
  * @description
@@ -11,7 +9,7 @@
  * - Security & Lifecycle constraints (Freeze-on-Hash)
  */
 
-import { RecursiveSet, Value, hashValue, emptySet, Tuple } from '../src/hash';
+import { RecursiveSet, Value, hashValue, emptySet, Tuple } from '../src/index';
 
 // ============================================================================
 // CONFIGURATION & UTILITIES
@@ -325,21 +323,6 @@ const safeTuple = new Tuple(...safeArray);
 safeArray.push(4);
 assert(safeTuple.length === 3, "Tuple ignores external array mutation (Safe Copy)");
 
-// Check runtime freezing
-const internalValues = safeTuple.raw as any; 
-let pushThrew = false;
-try {
-    internalValues.push(666);
-} catch(e) {
-    pushThrew = true;
-}
-
-if (pushThrew) {
-    console.log("[PASS] Tuple is frozen (Safe Mode)");
-} else {
-    console.log("[WARN] Tuple is mutable (Unsafe Performance Mode)");
-}
-
 const bigIntSet = new RecursiveSet<number>();
 bigIntSet.add(-1);
 bigIntSet.add(4294967295); // MAX_UINT32 (collides with -1 in 32-bit hashing)
@@ -374,69 +357,7 @@ console.log();
 // 18. PROPERTY BASED TESTING (SEEDED FUZZER)
 // ============================================================================
 console.log('--- Test 18: Property Based Testing (Contract Compliant) ---');
-
-function randomInput(): number | string | Tuple<any[]> {
-    const r = random();
-    // STRICT CONTRACT: No Infinity, No NaN
-    if (r < 0.2) return Number.MAX_SAFE_INTEGER;
-    if (r < 0.5) return Math.floor(random() * 10000) - 5000;
-    if (r < 0.7) return "str" + Math.floor(random() * 100);
-    return new Tuple(Math.floor(random() * 10)); 
-}
-
-let antisymmetryPass = true;
-let transitivityPass = true;
-let reflexivityPass = true;
-let totalityPass = true;
-let symmetryPass = true;
-
-for(let i=0; i<1000; i++) {
-    const a = randomInput();
-    const b = randomInput();
-    const c = randomInput();
-
-    const cmpAB = RecursiveSet.compare(a, b);
-    const cmpBA = RecursiveSet.compare(b, a);
-    const cmpBC = RecursiveSet.compare(b, c);
-    const cmpAC = RecursiveSet.compare(a, c);
-
-    // 1. Reflexivity: a == a
-    if (RecursiveSet.compare(a, a) !== 0) {
-        console.error(`Reflexivity fail at i=${i}:`, fmt(a));
-        reflexivityPass = false;
-    }
-
-    // 2. Totality: Result must be finite (not NaN/Infinity)
-    // (RecursiveSet.compare uses a - b for numbers, so any finite diff is valid, not just -1/0/1)
-    if (!Number.isFinite(cmpAB)) {
-        console.error(`Totality fail at i=${i}:`, fmt(a), fmt(b));
-        totalityPass = false;
-    }
-
-    // 3. Antisymmetry: sign(a,b) == -sign(b,a)
-    if (cmpAB !== 0 && Math.sign(cmpAB) !== -Math.sign(cmpBA)) {
-        console.error(`Antisymmetry fail at i=${i}: A=${fmt(a)} B=${fmt(b)}`);
-        antisymmetryPass = false;
-    }
-
-    // 4. Symmetry of Equality
-    if (cmpAB === 0 && cmpBA !== 0) {
-        console.error(`Symmetry fail at i=${i}: A=${fmt(a)} B=${fmt(b)}`);
-        symmetryPass = false;
-    }
-
-    // 5. Transitivity
-    if (cmpAB < 0 && cmpBC < 0 && cmpAC >= 0) {
-        console.error(`Transitivity fail at i=${i} (<): A=${fmt(a)} B=${fmt(b)} C=${fmt(c)}`);
-        transitivityPass = false;
-    }
-}
-
-assert(reflexivityPass, "Comparator Reflexivity holds");
-assert(totalityPass, "Comparator Totality holds");
-assert(antisymmetryPass, "Comparator Antisymmetry holds");
-assert(symmetryPass, "Comparator Symmetry (Equals) holds");
-assert(transitivityPass, "Comparator Transitivity holds");
+console.log('--- No longer supports compare ---');
 console.log();
 
 // ============================================================================
