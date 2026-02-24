@@ -1,6 +1,6 @@
 /**
  * @module recursive-set
- * @version 8.0.0
+ * @version 8.1.0
  * @description
  * High-Performance collection library supporting **Value Semantics** (Deep Equality)
  * and recursive structures.
@@ -693,6 +693,68 @@ class RecursiveSet<T extends Value> implements Structural, Iterable<T> {
              for(const v of this._values) s.add(v);
         }
         return s;
+    }
+
+    // ========================================================================
+    // === FUNCTIONAL METHODS (Optimized) ===
+    // ========================================================================
+
+    /**
+     * Tests whether all elements in the set pass the test implemented by the provided function.
+     * Uses internal iteration for max speed.
+     */
+    every(predicate: (value: T) => boolean): boolean {
+        // Direct array access avoids iterator generator overhead
+        for (let i = 0; i < this._values.length; i++) {
+            if (!predicate(this._values[i])) return false;
+        }
+        return true;
+    }
+
+    /**
+     * Tests whether at least one element in the set passes the test.
+     */
+    some(predicate: (value: T) => boolean): boolean {
+        for (let i = 0; i < this._values.length; i++) {
+            if (predicate(this._values[i])) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Creates a new RecursiveSet populated with the results of calling a provided function.
+     * Pre-allocates storage to prevent resizing.
+     */
+    map<U extends Value>(callback: (value: T) => U): RecursiveSet<U> {
+        const result = new RecursiveSet<U>();
+        result.ensureCapacity(this.size);
+        for (let i = 0; i < this._values.length; i++) {
+            result.add(callback(this._values[i]));
+        }
+        return result;
+    }
+
+    /**
+     * Creates a new RecursiveSet with all elements that pass the test.
+     */
+    filter(predicate: (value: T) => boolean): RecursiveSet<T> {
+        const result = new RecursiveSet<T>();
+        for (let i = 0; i < this._values.length; i++) {
+            const v = this._values[i];
+            if (predicate(v)) result.add(v);
+        }
+        return result;
+    }
+
+    /**
+     * Executes a reducer function on each element.
+     */
+    reduce<U>(callback: (accumulator: U, currentValue: T) => U, initialValue: U): U {
+        let accumulator = initialValue;
+        for (let i = 0; i < this._values.length; i++) {
+            accumulator = callback(accumulator, this._values[i]);
+        }
+        return accumulator;
     }
 
     // === SET OPERATIONS ===

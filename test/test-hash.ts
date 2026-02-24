@@ -415,6 +415,142 @@ measure('Scenario 5: The Float Swamp (Nested Sets)', () => {
     assert(metaSet.size === limit, `Size must be ${limit}`);
 });
 
+console.log();
+
+
+// ============================================================================
+// 20. FUNCTIONAL METHODS (Native Integration)
+// ============================================================================
+console.log('--- Test 20: Functional Methods (Map/Filter/Reduce/Every/Some) ---');
+
+const funcSet = new RecursiveSet<number>(1, 2, 3, 4, 5);
+
+// --- 20.1 EVERY ---
+// "All elements are > 0" -> True
+assert(funcSet.every(x => x > 0), "Every: All positive numbers returns true");
+// "All elements are < 3" -> False (because 3, 4, 5 exist)
+assert(!funcSet.every(x => x < 3), "Every: Short-circuit returns false correctly");
+// Vacuous truth: Every element in an empty set satisfies any condition
+assert(emptySet<number>().every(x => x > 100), "Every: Empty set returns true (Vacuous Truth)");
+
+// --- 20.2 SOME ---
+assert(funcSet.some(x => x === 3), "Some: Finding existing element returns true");
+assert(!funcSet.some(x => x > 10), "Some: Searching non-existent returns false");
+assert(!emptySet<number>().some(x => true), "Some: Empty set always returns false");
+
+// --- 20.3 MAP ---
+// Logic: x % 2. Input: {1, 2, 3, 4, 5} -> Output: {1, 0, 1, 0, 1} -> Set reduces to: {0, 1}
+const mappedSet = funcSet.map(x => x % 2);
+assert(mappedSet.size === 2, "Map: Correctly collapses duplicates (Set Semantics)");
+assert(mappedSet.has(0) && mappedSet.has(1), "Map: Contains correct transformed values");
+
+// Type Transformation: Number -> String
+const stringMapped = funcSet.map(x => "val:" + x);
+assert(stringMapped.has("val:1"), "Map: Handles Type transformation (T -> U)");
+
+// --- 20.4 FILTER ---
+const filteredSet = funcSet.filter(x => x >= 4);
+assert(filteredSet.size === 2, "Filter: Size correct");
+assert(filteredSet.has(4) && filteredSet.has(5) && !filteredSet.has(3), "Filter: Correct elements retained");
+
+// --- 20.5 REDUCE ---
+const sumTotal = funcSet.reduce((acc, val) => acc + val, 0);
+assert(sumTotal === 15, "Reduce: Aggregates values correctly (1+2+3+4+5=15)");
+
+console.log();
+
+// ============================================================================
+// 21. FUNCTIONAL PERFORMANCE BENCHMARK
+// ============================================================================
+console.log('--- Test 21: Functional Perf (Alloc-Free vs Spread) ---');
+
+const heavySet = new RecursiveSet<number>();
+for(let i=0; i<100_000; i++) heavySet.add(i);
+
+// Benchmark 1: Native .map() (Zero Allocation approach)
+measure('Native .map() (x * 2)', () => {
+    return heavySet.map(x => x * 2);
+});
+
+// Benchmark 2: Old School Spread [...set].map() (Memory Heavy)
+measure('Spread [...set].map()', () => {
+    // Simulation of the "slow" way for comparison
+    const arr = [...heavySet]; 
+    const res = new RecursiveSet<number>();
+    // Note: This is actually optimistic, normally map creates another array before Set
+    const mappedArr = arr.map(x => x * 2); 
+    for(const item of mappedArr) res.add(item);
+    return res;
+});
+
+// Benchmark 3: Fail-Fast check
+measure('Native .some() (Found early)', () => {
+    // Should be instant (O(1)) as 0 is the first element
+    return heavySet.some(x => x === 0);
+});
+
+measure('Spread [...set].some()', () => {
+    // Must iterate EVERYTHING to build array first, even if result is instant
+    return [...heavySet].some(x => x === 0);
+});
+
+console.log();
+
+// ============================================================================
+// 22. EDGE CASES & MALICIOUS MAPPING ("THE MEAT GRINDER")
+// ============================================================================
+console.log('--- Test 22: Edge Cases & Malicious Mapping ---');
+
+// 22.1 The "Black Hole" (Total Collapse)
+// Input: 10,000 distinct integers.
+// Operation: Map ALL of them to 0.
+// Stress: Calls internal .add() 10,000 times with the SAME value.
+// Expected: A set with exactly size 1, but allocated capacity for 10,000 (pre-sized).
+const hugeSet = new RecursiveSet<number>();
+for(let i=0; i<10000; i++) hugeSet.add(i);
+
+const blackHole = hugeSet.map(_ => 0);
+assert(blackHole.size === 1, "Black Hole: Collapsed 10k items into 1");
+assert(blackHole.has(0), "Black Hole: Contains the event horizon (0)");
+
+// 22.2 The "Structural Implosion"
+// Input: A set of Sets: { {1}, {2}, {3} ... }
+// Operation: Map to emptySet().
+// Stress: Structural equality check on objects.
+const setOfSets = new RecursiveSet<RecursiveSet<number>>();
+for(let i=0; i<100; i++) setOfSets.add(new RecursiveSet(i));
+
+const imploded = setOfSets.map(_ => emptySet<number>());
+assert(imploded.size === 1, "Implosion: All unique sets mapped to one empty set");
+// Check if the contained item is indeed an empty set
+const val = imploded[Symbol.iterator]().next().value; // Manual peek
+assert(val.isEmpty(), "Implosion: Result contains the empty set");
+
+// 22.3 Boolean Quantization
+// Input: 0..99
+// Operation: Map to (x > 50) -> Only {true, false} remains
+const booleanSet = hugeSet.map(x => x > 5000); // 5000 false, 4999 true (roughly)
+assert(booleanSet.size === 2, "Quantization: Reduced 10k ints to {true, false}");
+assert(booleanSet.has(true) && booleanSet.has(false), "Quantization: Both states present");
+
+// 22.4 The "Chain Reaction" (Type Morphing)
+// Numbers -> Strings -> Lengths (Numbers) -> Sum
+const chainResult = new RecursiveSet<number>(10, 100, 1000) // Size 3
+    .map(x => "val_" + x)       // -> {"val_10", "val_100", "val_1000"} (Strings)
+    .map(s => s.length)         // -> {6, 7, 8} (Numbers again)
+    .filter(len => len % 2 === 0) // -> {6, 8} (Filter odds)
+    .reduce((acc, val) => acc + val, 0); // -> 14
+
+assert(chainResult === 14, "Chain Reaction: Num->Str->Num->Filter->Reduce works");
+
+// 22.5 The "Filter-All" (Ghost Town)
+// Ensure that pre-sizing doesn't leave garbage when everything is filtered out.
+const ghostTown = hugeSet.filter(x => x > 999999);
+assert(ghostTown.size === 0, "Filter-All: Result is empty");
+assert(ghostTown.isEmpty(), "Filter-All: isEmpty() is true");
+
+console.log('[PASS] The Meat Grinder survived.');
+
 console.log('\n=======================================');
 if (failureCount === 0) {
     console.log(`[ALL PASSED] Ready for Release.`);

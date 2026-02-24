@@ -118,6 +118,29 @@ interface Structural {
 - `add(element: T): void`: Adds an element ($O(1)$ amortized).
 - `remove(element: T): void`: Removes an element ($O(1)$ amortized).
 
+#### Functional Methods (Zero-Allocation)
+
+*Added in v8.1.0* — These methods iterate directly over internal storage, avoiding the memory overhead of spreading into a temporary Array (`[...set]`).
+
+- `map<U>(fn: (v: T) => U): RecursiveSet<U>`
+  - Returns a new set. Pre-allocates storage to prevent resizing during mapping.
+- `filter(fn: (v: T) => boolean): RecursiveSet<T>`
+  - Returns a new set containing only elements that satisfy the predicate.
+- `reduce<U>(fn: (acc: U, v: T) => U, init: U): U`
+  - Aggregates values without intermediate allocations.
+- `every(fn: (v: T) => boolean): boolean`
+  - **Fail-Fast:** Returns `false` immediately upon the first mismatch ($O(1)$ best case).
+- `some(fn: (v: T) => boolean): boolean`
+  - **Fail-Fast:** Returns `true` immediately upon the first match ($O(1)$ best case).
+
+```typescript
+// Example: High-Performance Check
+const largeSet = new RecursiveSet(0, 1, 2, ...);
+
+// Instead of: [...largeSet].some(x => x === 0)  <-- Allocates Array(N)
+// Use:        largeSet.some(x => x === 0)       <-- Zero allocation, instant return
+```
+
 #### Set Operations
 
 All operations return a new `RecursiveSet` instance.
