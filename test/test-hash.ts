@@ -568,6 +568,49 @@ assert(fmResult.size === 3, "Result size correct (3 items)");
 assert(fmResult.has(4) && fmResult.has(36), "Correct values mapped");
 assert(!fmResult.has(1), "Odd numbers filtered out");
 console.log('[PASS] filterMap works correctly.');
+console.log();
+
+// ============================================================================
+// 24. FILTERMAP PERFORMANCE STRESS TEST (Variable vs Direct Access)
+// ============================================================================
+console.log('--- Test 24: filterMap Performance Stress Test ---');
+
+const STRESS_SIZE = 1_000_000;
+const STRESS_ITERATIONS = 20;
+
+console.log(`[Setup] Building set with ${STRESS_SIZE} items...`);
+const heavySetFilterMap = new RecursiveSet<number>();
+// Wir nutzen .add(), damit die interne Struktur (Indizes/Hashes) valide ist!
+for(let i=0; i<STRESS_SIZE; i++) heavySetFilterMap.add(i);
+
+// Die Funktion, die wir testen
+// Wir filtern 50% raus (gerade Zahlen) und mappen sie (x2).
+// Das zwingt die Loop dazu, sowohl das Prädikat als auch den Mapper oft aufzurufen.
+const runTest = () => {
+    return heavySetFilterMap.filterMap(
+        x => x % 2 === 0, 
+        x => x * 2
+    );
+};
+
+// 1. WARMUP (Wichtig für JIT Compiler / TurboFan)
+console.log('[Warmup] Running 5 iterations to heat up JIT...');
+for(let i=0; i<5; i++) runTest();
+
+// 2. MESSUNG
+console.log(`[Measure] Running ${STRESS_ITERATIONS} iterations...`);
+const startStressFilterMap = performance.now();
+
+for(let i=0; i<STRESS_ITERATIONS; i++) {
+    runTest();
+}
+
+const endStressFilterMap = performance.now();
+const totalTime = endStressFilterMap - startStressFilterMap;
+const avgTime = totalTime / STRESS_ITERATIONS;
+
+console.log(`[RESULT] Total Time: ${totalTime.toFixed(2)} ms`);
+console.log(`[RESULT] Avg per Run: ${avgTime.toFixed(2)} ms`);
 
 console.log('\n=======================================');
 if (failureCount === 0) {

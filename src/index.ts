@@ -1,6 +1,6 @@
 /**
  * @module recursive-set
- * @version 8.2.0
+ * @version 8.2.1
  * @description
  * High-Performance collection library supporting **Value Semantics** (Deep Equality)
  * and recursive structures.
@@ -245,9 +245,11 @@ class RecursiveMap<K extends Value, V extends Value> implements Structural, Iter
     
     private _isFrozen = false;
     private _cachedHash: number | null = null;
+    
+    private readonly MIN_BUCKETS = 16;
 
     constructor() {
-        this._indices = new Uint32Array(16);
+        this._indices = new Uint32Array(this.MIN_BUCKETS);
     }
 
     get size() { return this._keys.length; }
@@ -298,7 +300,8 @@ class RecursiveMap<K extends Value, V extends Value> implements Structural, Iter
     }
 
     /**
-     * Resizes the internal lookup table if load factor > 0.75.
+     * Optimized Grow-Logic (Inline for V8 Performance).
+     * Ensures the hash table has enough buckets to hold `capacity` elements.
      */
     ensureCapacity(capacity: number) {
         if (capacity * 1.33 > this._bucketCount) {
@@ -308,13 +311,13 @@ class RecursiveMap<K extends Value, V extends Value> implements Structural, Iter
             this._bucketCount = target;
             this._mask = this._bucketCount - 1;
             
-            // Rehash all entries into new index table
-            const oldKeys = this._keys;
-            const oldHashes = this._hashes;
+            // Re-allocate Index Table
             this._indices = new Uint32Array(this._bucketCount);
             
-            for (let i = 0; i < oldKeys.length; i++) {
-                const h = oldHashes[i];
+            // Re-populate (Inline Loop for Max Speed)
+            const len = this._keys.length;
+            for (let i = 0; i < len; i++) {
+                const h = this._hashes[i];
                 let idx = h & this._mask;
                 // Linear Probing
                 while (this._indices[idx] !== 0) idx = (idx + 1) & this._mask;
@@ -325,6 +328,26 @@ class RecursiveMap<K extends Value, V extends Value> implements Structural, Iter
 
     private resize() {
         this.ensureCapacity(this._keys.length + 1);
+    }
+
+    /**
+     * Helper specifically for shrinking (Cold Path).
+     * Reduces memory usage when the map is mostly empty.
+     */
+    private shrink(): void {
+        // Halve the capacity
+        this._bucketCount >>= 1;
+        this._mask = this._bucketCount - 1;
+        this._indices = new Uint32Array(this._bucketCount);
+
+        // Rehash existing items
+        const len = this._keys.length;
+        for (let i = 0; i < len; i++) {
+            const h = this._hashes[i];
+            let idx = h & this._mask;
+            while (this._indices[idx] !== 0) idx = (idx + 1) & this._mask;
+            this._indices[idx] = i + 1;
+        }
     }
 
     /**
@@ -408,6 +431,15 @@ class RecursiveMap<K extends Value, V extends Value> implements Structural, Iter
                     // Update index table to point to new location of the swapped element
                     this.updateIndexForKey(lastHash, this._keys.length + 1, ptr + 1);
                 }
+
+                // -----------------------------------------------------------
+                // OPTIMIZED SHRINK CHECK (Integer Math)
+                // -----------------------------------------------------------
+                if (this._keys.length > this.MIN_BUCKETS && 
+                   (this._keys.length << 2) < this._bucketCount) {
+                    this.shrink();
+                }
+
                 return true;
             }
             idx = (idx + 1) & this._mask;
@@ -441,8 +473,6 @@ class RecursiveMap<K extends Value, V extends Value> implements Structural, Iter
             const distHole = (holeIdx - ideal + this._bucketCount) & this._mask;
             const distI = (i - ideal + this._bucketCount) & this._mask;
             
-            // If the element at 'i' belongs to a bucket logically before the hole,
-            // or is further away from its ideal slot than the hole is, move it back.
             if (distHole < distI) {
                 this._indices[holeIdx] = entry;
                 holeIdx = i;
@@ -540,12 +570,14 @@ class RecursiveSet<T extends Value> implements Structural, Iterable<T> {
         return this._xorHash;
     }
 
-
     /**
-     * Ensures the hash table has enough buckets to hold `capacity` elements
-     * without exceeding the load factor.
+     * Optimized Grow-Logic (Inline for V8 Performance).
+     * We do NOT use rehash() here to keep the Hot-Path efficient.
      */
     ensureCapacity(capacity: number) {
+        // Check load factor (capacity > bucketCount * 0.75)
+        // Integer math variant: (capacity * 4) > (bucketCount * 3)
+        // Or simplified float check if capacity is massive
         if (capacity * 1.33 > this._bucketCount) {
             let target = this._bucketCount;
             while (target * 0.75 < capacity) target *= 2;
@@ -553,13 +585,15 @@ class RecursiveSet<T extends Value> implements Structural, Iterable<T> {
             this._bucketCount = target;
             this._mask = this._bucketCount - 1;
             
-            const oldValues = this._values;
-            const oldHashes = this._hashes;
+            // Re-allocate Index Table
             this._indices = new Uint32Array(this._bucketCount);
             
-            for (let i = 0; i < oldValues.length; i++) {
-                const h = oldHashes[i];
+            // Re-populate (Inline Loop for Max Speed)
+            const len = this._values.length;
+            for (let i = 0; i < len; i++) {
+                const h = this._hashes[i];
                 let idx = h & this._mask;
+                // Linear Probing
                 while (this._indices[idx] !== 0) idx = (idx + 1) & this._mask;
                 this._indices[idx] = i + 1;
             }
@@ -605,6 +639,26 @@ class RecursiveSet<T extends Value> implements Structural, Iterable<T> {
     
     static compareVisual(a: Value, b: Value): number {
         return compareVisualLogic(a, b);
+    }
+
+    /**
+     * Helper specifically for shrinking (Cold Path).
+     * We don't mind the function call overhead here as much as in add().
+     */
+    private shrink(): void {
+        // Halve the capacity
+        this._bucketCount >>= 1;
+        this._mask = this._bucketCount - 1;
+        this._indices = new Uint32Array(this._bucketCount);
+
+        // Rehash existing items
+        const len = this._values.length;
+        for (let i = 0; i < len; i++) {
+            const h = this._hashes[i];
+            let idx = h & this._mask;
+            while (this._indices[idx] !== 0) idx = (idx + 1) & this._mask;
+            this._indices[idx] = i + 1;
+        }
     }
 
     /**
@@ -674,6 +728,12 @@ class RecursiveSet<T extends Value> implements Structural, Iterable<T> {
                     this._hashes[valIndex] = lastHash;
                     this.updateIndexForValue(lastHash, this._values.length + 1, valIndex + 1);
                 }
+
+                if (this._values.length > this.MIN_BUCKETS && 
+                   (this._values.length << 2) < this._bucketCount) {
+                    this.shrink();
+                }
+
                 return;
             }
             idx = (idx + 1) & this._mask;
