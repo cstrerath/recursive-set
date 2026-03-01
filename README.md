@@ -120,12 +120,15 @@ interface Structural {
 
 #### Functional Methods (Zero-Allocation)
 
-*Added in v8.1.0* — These methods iterate directly over internal storage, avoiding the memory overhead of spreading into a temporary Array (`[...set]`).
+*Added in v8.2.0* — These methods iterate directly over internal storage, avoiding the memory overhead of spreading into a temporary Array (`[...set]`).
 
 - `map<U>(fn: (v: T) => U): RecursiveSet<U>`
   - Returns a new set. Pre-allocates storage to prevent resizing during mapping.
 - `filter(fn: (v: T) => boolean): RecursiveSet<T>`
   - Returns a new set containing only elements that satisfy the predicate.
+- `filterMap<U>(predicate: (v: T) => boolean, mapper: (v: T) => U): RecursiveSet<U>`
+  - **Fused Operation:** Computes `{ f(x) : x in M | p(x) }` in a single pass.
+  - Significantly faster than chaining `.filter(...).map(...)` as it avoids creating an intermediate set.
 - `reduce<U>(fn: (acc: U, v: T) => U, init: U): U`
   - Aggregates values without intermediate allocations.
 - `every(fn: (v: T) => boolean): boolean`
@@ -137,8 +140,8 @@ interface Structural {
 // Example: High-Performance Check
 const largeSet = new RecursiveSet(0, 1, 2, ...);
 
-// Instead of: [...largeSet].some(x => x === 0)  <-- Allocates Array(N)
-// Use:        largeSet.some(x => x === 0)       <-- Zero allocation, instant return
+// Instead of: largeSet.filter(x => x % 2 === 0).map(x => x * x) <-- Creates intermediate Set
+// Use:        largeSet.filterMap(x => x % 2 === 0, x => x * x)  <-- Single pass, zero overhead
 ```
 
 #### Set Operations

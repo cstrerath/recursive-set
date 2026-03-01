@@ -550,6 +550,24 @@ assert(ghostTown.size === 0, "Filter-All: Result is empty");
 assert(ghostTown.isEmpty(), "Filter-All: isEmpty() is true");
 
 console.log('[PASS] The Meat Grinder survived.');
+console.log();
+
+// ============================================================================
+// 23. FUSED OPERATIONS (FilterMap)
+// ============================================================================
+console.log('--- Test 23: filterMap (Fused Operation) ---');
+const fmSource = new RecursiveSet<number>(1, 2, 3, 4, 5, 6);
+
+// Logic: Keep evens, square them.
+const fmResult = fmSource.filterMap(
+    n => n % 2 === 0, 
+    n => n * n
+);
+
+assert(fmResult.size === 3, "Result size correct (3 items)");
+assert(fmResult.has(4) && fmResult.has(36), "Correct values mapped");
+assert(!fmResult.has(1), "Odd numbers filtered out");
+console.log('[PASS] filterMap works correctly.');
 
 console.log('\n=======================================');
 if (failureCount === 0) {

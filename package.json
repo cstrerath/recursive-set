@@ -43,7 +43,7 @@
   },
   "homepage": "https://github.com/cstrerath/recursive-set#readme",
   "devDependencies": {
-    "@types/node": "^20.0.0",
+    "@types/node": "^20.19.35",
     "rimraf": "^6.1.2",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3"

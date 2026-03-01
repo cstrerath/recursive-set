@@ -1,6 +1,6 @@
 /**
  * @module recursive-set
- * @version 8.1.0
+ * @version 8.2.0
  * @description
  * High-Performance collection library supporting **Value Semantics** (Deep Equality)
  * and recursive structures.
@@ -755,6 +755,28 @@ class RecursiveSet<T extends Value> implements Structural, Iterable<T> {
             accumulator = callback(accumulator, this._values[i]);
         }
         return accumulator;
+    }
+
+    /**
+     * Fused Filter-Map operation.
+     * Computes { f(x) : x in M | p(x) } in a single pass.
+     * More efficient than chaining .filter().map() as it avoids intermediate sets.
+     */
+    filterMap<U extends Value>(
+        predicate: (value: T) => boolean,
+        mapper: (value: T) => U
+    ): RecursiveSet<U> {
+        const result = new RecursiveSet<U>();
+        // Optimistic pre-sizing: Assume worst case (all match) to prevent resizing overhead
+        result.ensureCapacity(this.size);
+
+        for (let i = 0; i < this._values.length; i++) {
+            const v = this._values[i];
+            if (predicate(v)) {
+                result.add(mapper(v));
+            }
+        }
+        return result;
     }
 
     // === SET OPERATIONS ===
