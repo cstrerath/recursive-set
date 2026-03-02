@@ -1,233 +1,175 @@
-import { RecursiveSet, Value } from '../src/index';
-import { NNFNegation, Literal, Clause, CNF, getComplement } from './04-CNF';
-import { Variable } from './Propositional-Logic-Parser';
+import { RecursiveSet, Value, Tuple, flatMap } from '../src/index';
 
-// ============================================================================
-// 1. Helpers
-// ============================================================================
+type Variable = string;
+type Literal  = Variable 
+              | Tuple<['¬', Variable]>;
+type Clause   = RecursiveSet<Literal>;
+type Clauses  = RecursiveSet<Clause>;
 
-/**
- * Extracts the variable name from a literal.
- * Uses type narrowing and the semantic getter .phi
- */
-function extractVariable(l: Literal): Variable {
-    // Type Guard: TS checks if l is NNFNegation
-    if (l instanceof NNFNegation) {
-        return l.phi; // Clean access via getter (returns Variable)
+type RS<T extends Value> = RecursiveSet<T>;
+
+function empty<T extends Value>(): RS<T> {
+    return new RecursiveSet<T>()
+}
+
+function single<T extends Value>(x: T): RS<T> {
+    return new RecursiveSet<T>(x)
+}
+
+export function complement(l: Literal): Literal {
+    if (typeof l === 'string') {
+        return new Tuple('¬', l);
+    } else {
+        return l.get(1);
     }
-    return l; // l is Variable (string)
 }
 
-/**
- * Returns an arbitrary element from a set (for unit selection).
- */
+function extractVariable(l: Literal): Variable {
+    if (typeof l === 'string') {
+        return l;
+    } else {
+        return l.get(1);
+    }
+}
+
+function sameLiteral(a: Literal, b: Literal): boolean {
+    if (typeof a == 'string') {
+        return typeof b == 'string' && a == b;
+    } else {
+        return typeof b != 'string' && a.equals(b);
+    }
+}
+
 function arb<T extends Value>(S: RecursiveSet<T>): T | null {
-    return S.pickRandom() ?? null;
+    if (S.isEmpty()) {
+        return null;
+    }
+    const val = S.pickRandom();
+    return val ?? null;
 }
 
-/**
- * Creates a CNF containing a single unit clause {{l}}.
- * Explicit typing guarantees CNF structure without casts.
- */
-function unit(l: Literal): CNF {
-    const c = new RecursiveSet<Literal>(l);     // Clause
-    const res = new RecursiveSet<Clause>(c);    // CNF
-    return res;
+function scoreLiteral(Cls: Clauses, l: Literal): number {
+    return Cls.reduce((s, c) => c.has(l) ? s + Math.pow(2, -c.size) : s, 0);
 }
 
-// ============================================================================
-// 2. Jeroslow-Wang Heuristic
-// ============================================================================
-
-/**
- * Selects the "best" literal to branch on.
- * Strategy: Jeroslow-Wang (One-Sided).
- * Literals in short clauses get higher weights (2^-length).
- * This tends to satisfy short clauses quickly, creating unit propagations.
- */
 function selectLiteral(
-    Clauses: CNF,
-    Variables: RecursiveSet<Variable>,
-    UsedVars: RecursiveSet<Variable>
+    Clauses:   Clauses,
+    Variables: RS<Variable>,
+    UsedVars:  RS<Variable>
 ): Literal {
-    let maxLiteral: Literal | null = null;
-    let maxScore = -1;
-
-    // 1. Candidate Selection: Iterate over unused variables
-    for (const v of Variables) {
-        if (UsedVars.has(v)) continue;
-
-        // Check both polarities: A and ¬A
-        const candidates: Literal[] = [v, new NNFNegation(v)];
-
-        for (const lit of candidates) {
-            let score = 0;
-
-            // 2. Scoring: Sum weights of clauses containing the literal
-            // Weight formula: J(l) = Sum( 2^(-|C|) ) for all C where l in C
-            for (const C of Clauses) {
-                if (C.has(lit)) {
-                    score += Math.pow(2, -C.size);
-                }
-            }
-
-            // 3. Update Maximum
+    let maxLiteral: Literal = arb(Variables) ?? 'x';
+    let maxScore = -Infinity;
+    for (const variable of Variables) {
+        if (UsedVars.has(variable)) continue;
+        const pos: Literal = variable;
+        const neg: Literal = new Tuple('¬', variable);
+        for (const literal of [pos, neg]) {
+            const score = scoreLiteral(Clauses, literal);
             if (score > maxScore) {
-                maxScore = score;
-                maxLiteral = lit;
+                maxScore   = score;
+                maxLiteral = literal;
             }
         }
-    }
-
-    // Fallback/Safety: Should not happen if Variables > UsedVars
-    if (maxLiteral === null) {
-        throw new Error("Heuristic failed: No unused variables found, but solution not yet determined.");
-    }
-
+    }    
     return maxLiteral;
 }
 
-// ============================================================================
-// 3. DPLL Core Logic
-// ============================================================================
-
-function reduce(Clauses: CNF, l: Literal): CNF {
-    const lBar = getComplement(l);
-    const result = new RecursiveSet<Clause>();
-
-    for (const clause of Clauses) {
-        // Rule 1: Subsumption.
-        // If the clause contains l, it is true. Drop it.
-        if (clause.has(l)) continue;
-
-        // Rule 2: Unit Cut.
-        // If the clause contains ¬l, remove ¬l.
-        if (clause.has(lBar)) {
-            const newClause = clause.clone(); // Returns RecursiveSet<Literal> (Clause)
-            newClause.remove(lBar);
-            result.add(newClause);
-        } else {
-            // Rule 3: Copy unaffected clause.
-            result.add(clause);
-        }
-    }
-
-    // Add decision literal as a fact (Decision History)
-    // new RecursiveSet<Literal> matches type Clause
-    result.add(new RecursiveSet<Literal>(l));
-
-    return result; // Matches type CNF (RecursiveSet<Clause>)
+function reduce(Clauses: Clauses, l: Literal): Clauses {
+    const lBar          = complement(l);
+    const singletonLBar = single(lBar);
+    const result = Clauses.filterMap(
+        (clause) => !clause.has(l),
+        (clause) => clause.has(lBar) ? clause.difference(singletonLBar) : clause
+    );
+    result.add(new RecursiveSet<Literal>(l));    
+    return result;
 }
 
-function saturate(Clauses: CNF): CNF {
+function saturate(Clauses: Clauses): Clauses {
     let S = Clauses;
-    const UsedUnits = new RecursiveSet<Clause>();
-
+    const Used : RS<Clause> = empty(); 
     while (true) {
-        // Find all NEW unit clauses
-        const Units = new RecursiveSet<Clause>();
-        for (const C of S) {
-            if (C.size === 1 && !UsedUnits.has(C)) {
-                Units.add(C);
-            }
+        const Units = S.filter(C => C.size == 1 && !Used.has(C));
+        const unit  = arb(Units);
+        if (!unit) {
+            break; 
         }
-
-        if (Units.isEmpty()) break;
-
-        // Pick arbitrary unit and propagate
-        const unitClause = arb(Units)!;
-        UsedUnits.add(unitClause);
-
-        const l = arb(unitClause)!;
-        S = reduce(S, l);
+        Used.add(unit);
+        S = reduce(S, arb(unit)!);
     }
     return S;
 }
 
 function solveRecursive(
-    Clauses: CNF,
-    Variables: RecursiveSet<Variable>,
-    UsedVars: RecursiveSet<Variable>
-): CNF {
-    // 1. Boolean Constraint Propagation (BCP)
+    Clauses:   Clauses, 
+    Variables: RS<Variable>, 
+    UsedVars:  RS<Variable>): Clauses 
+{
     const S = saturate(Clauses);
-
-    // 2. Check for Contradiction (Empty Clause {{}})
-    const EmptyClause = new RecursiveSet<Literal>();
-    if (S.has(EmptyClause)) {
-        // Construct Falsum explicitly typed
-        const Falsum = new RecursiveSet<Clause>(EmptyClause);
-        return Falsum;
+    const EmptyClause: RS<Literal> = empty();
+    if (S.has(EmptyClause)) { // S is inconsistent
+        return single(EmptyClause);
     }
-
-    // 3. Check for Solution (All clauses are units)
-    let allUnits = true;
-    for (const C of S) {
-        if (C.size !== 1) {
-            allUnits = false;
-            break;
-        }
+    if (S.every(C => C.size == 1)) { // S is trivial
+        return S;  
     }
-    if (allUnits) return S;
-
-    // 4. Branching (Heuristic Decision)
-    const l = selectLiteral(S, Variables, UsedVars);
-    const lBar = getComplement(l);
-    const v = extractVariable(l);
-
-    // Prepare state for next level
-    const nextUsedVars = UsedVars.clone();
-    nextUsedVars.add(v);
-
-    // Branch A: Assume Heuristic choice 'l' is True
-    // (Common strategy: Try the "heavier" literal first)
-    const ResA = solveRecursive(S.union(unit(l)), Variables, nextUsedVars);
-    
-    // If Branch A found a model (no empty clause), return it.
-    if (!ResA.has(EmptyClause)) return ResA;
-
-    // Branch B: Backtrack. Assume 'l' is False (so lBar is True).
-    return solveRecursive(S.union(unit(lBar)), Variables, nextUsedVars);
+    const l = selectLiteral(Clauses, Variables, UsedVars);
+    if (!l) {
+        return S; 
+    }
+    const nextUsedVars = UsedVars.union(single(extractVariable(l)));
+    const Result1 = solveRecursive(S.union(single(single(l))), Variables, nextUsedVars);
+    if (!Result1.has(EmptyClause)) {
+        return Result1;
+    }
+    const lBar = complement(l);
+    return solveRecursive(S.union(single(single(lBar))), Variables, nextUsedVars);
 }
 
-// ============================================================================
-// 4. Public API & Output
-// ============================================================================
-
-function solve(Clauses: CNF): CNF {
-    const Variables = new RecursiveSet<Variable>();
-    for (const C of Clauses) {
-        for (const lit of C) {
-            Variables.add(extractVariable(lit));
-        }
-    }
-    const UsedVars = new RecursiveSet<Variable>();
-    
-    return solveRecursive(Clauses, Variables, UsedVars);
+export function solve(Clauses: RS<Clause>): RS<Clause> {
+    const Variables = flatMap(Clauses, clause => clause.map(extractVariable));
+    return solveRecursive(Clauses, Variables, empty<Variable>());
 }
 
 function literal_to_str(C: Clause): string {
     const val = arb(C);
-    if (!val) return "{}";
-    
-    if (val instanceof NNFNegation) {
-        return `${val.phi} ↦ False`;
-    } else {
+    if (val === null) return "{}";   
+    if (typeof val === 'string') {
         return `${val} ↦ True`;
+    } else {
+        return `${val.get(1)} ↦ False`;
     }
 }
 
-function toString(S: CNF, Simplified: CNF): string {
-    const EmptyClause = new RecursiveSet<Literal>();
-    if (Simplified.has(EmptyClause)) return "UNSAT";
+function prettify(Clauses: RecursiveSet<Clause>): string {
+  const res: string[] = [];
+  for (const C of Clauses) res.push(C.toString());
+  return `{${res.join(', ')}}`;
+}
+function prettifyClauses(M: Clauses): string {
+    const clauseStrings: string[] = [];
+    for (const clause of M) {
+        const literalStrings: string[] = [];
+        for (const lit of clause) {
+            if (typeof lit === 'string') {
+                literalStrings.push(lit);
+            } else {
+                literalStrings.push(`${lit.get(0)}${lit.get(1)}`);
+            }
+        }
+        clauseStrings.push(`{${literalStrings.join(', ')}}`);
+    }
+    return `{${clauseStrings.join(', ')}}`;
+}
 
+function toString(S: Clauses, Simplified: Clauses): string {
+    const EmptyClause = new RecursiveSet<Literal>();
+    if (Simplified.has(EmptyClause)) {
+        return `${prettifyClauses(S)} is unsolvable`;
+    }
     const parts: string[] = [];
-    const sorted = Array.from(Simplified).sort(RecursiveSet.compareVisual);
-    
-    for (const C of sorted) {
+    for (const C of Simplified) {
         parts.push(literal_to_str(C));
     }
     return '{ ' + parts.join(', ') + ' }';
 }
-
-export { solve, toString };

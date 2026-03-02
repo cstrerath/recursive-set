@@ -1,6 +1,6 @@
 /**
  * @module recursive-set
- * @version 8.2.1
+ * @version 8.3.0
  * @description
  * High-Performance collection library supporting **Value Semantics** (Deep Equality)
  * and recursive structures.
@@ -951,6 +951,29 @@ function emptySet<T extends Value>() { return new RecursiveSet<T>(); }
 function singleton<T extends Value>(el: T) { return new RecursiveSet<T>(el); }
 const hashValue = getHashCode; 
 
+// ============================================================================
+// 8. UTILITY EXPORTS
+// ============================================================================
+
+/**
+ * Maps an iterable to sets and merges them into an initial set.
+ * Uses mutation to avoid O(N^2) copying.
+ */
+function flatMap<T, U extends Value>(
+    items: Iterable<T>, 
+    f: (element: T) => RecursiveSet<U>,
+    initial: RecursiveSet<U> = new RecursiveSet<U>() 
+): RecursiveSet<U> {
+    const result = initial.clone();
+    for (const item of items) {
+        const mappedSet = f(item);
+        for (const val of mappedSet) {
+            result.add(val);
+        }
+    }
+    return result;
+}
+
 export {
     RecursiveSet,
     RecursiveMap,
@@ -961,5 +984,6 @@ export {
     emptySet,
     singleton,
     hashValue,
-    getHashCode
+    getHashCode,
+    flatMap,
 };

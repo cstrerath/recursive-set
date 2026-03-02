@@ -1,45 +1,48 @@
-import { RecursiveSet } from '../src/index';
-import { Literal, Clause, CNF, NNFNegation } from './04-CNF'; 
-import * as DP from './07-Davis-Putnam-JW'; // Unser Solver
+import { RecursiveSet, Tuple, Value } from '../src/index';
+// Import the Professor's Solver
+import { solve } from './07-Davis-Putnam-JW';
 
 // ============================================================================
-// 1. HELPER & CONSTRAINT GENERATION (STRICT NNF)
+// 1. TYPES
 // ============================================================================
 
 type Variable = string;
+type Literal  = Variable | Tuple<['¬', Variable]>;
+type Clause   = RecursiveSet<Literal>;
+type Clauses  = RecursiveSet<Clause>;
+type RS<T extends Value> = RecursiveSet<T>;
+
+function empty<T extends Value>(): RS<T> {
+    return new RecursiveSet<T>()
+}
+
+// ============================================================================
+// 2. CONSTRAINT GENERATION
+// ============================================================================
 
 function varName(row: number, col: number): Variable {
     return `Q<${row},${col}>`;
 }
 
 /**
- * Erzeugt Klauseln für "Höchstens eine Dame in der Menge S".
- * Logik: Für alle Paare (p, q) füge Klausel { ¬p, ¬q } hinzu.
+ * Generates clauses for "At most one Queen in set S".
+ * Logic: For all pairs (p, q) in S, add the clause { ¬p, ¬q }.
  */
-function atMostOne(S: RecursiveSet<Variable>): CNF {
-    // Expliziter Typ: Wir bauen ein CNF (Set of Clauses)
-    const result = new RecursiveSet<Clause>();
-    const arr = Array.from(S);
-
+function atMostOne(S: RS<Variable>): RS<Clause> {
+    const result: RS<Clause> = empty();
+    const arr = Array.from(S); 
     for (let i = 0; i < arr.length; i++) {
         for (let j = i + 1; j < arr.length; j++) {
-            const p = arr[i];
-            const q = arr[j];
-
-            // Clause: { ¬p, ¬q }
-            const clause = new RecursiveSet<Literal>();
-            
-            // Typsicher: Wir instanziieren Literal-Objekte (NNFNegation)
-            clause.add(new NNFNegation(p));
-            clause.add(new NNFNegation(q));
-            
+            const clause: RS<Literal> = empty();
+            clause.add(new Tuple('¬', arr[i]));
+            clause.add(new Tuple('¬', arr[j]));
             result.add(clause);
         }
     }
     return result;
 }
 
-function atMostOneInRow(row: number, n: number): CNF {
+function atMostOneInRow(row: number, n: number): RecursiveSet<Clause> {
     const VarsInRow = new RecursiveSet<Variable>();
     for (let col = 1; col <= n; col++) {
         VarsInRow.add(varName(row, col));
@@ -47,102 +50,107 @@ function atMostOneInRow(row: number, n: number): CNF {
     return atMostOne(VarsInRow);
 }
 
-function oneInColumn(col: number, n: number): CNF {
-    // Clause: { Q<1,c>, Q<2,c>, ... } (Mindestens eine Dame pro Spalte)
+function oneInColumn(col: number, n: number): RecursiveSet<Clause> {
     const VarsInColumn = new RecursiveSet<Literal>();
     for (let row = 1; row <= n; row++) {
         VarsInColumn.add(varName(row, col));
     }
-    
     const result = new RecursiveSet<Clause>();
-    result.add(VarsInColumn);
+    result.add(VarsInColumn as Clause);
     return result;
 }
 
-function atMostOneInFallingDiagonal(k: number, n: number): CNF {
-    const Vars = new RecursiveSet<Variable>();
+function atMostOneInFallingDiagonal(k: number, n: number): RecursiveSet<Clause> {
+    const VarsInDiagonal = new RecursiveSet<Variable>();
     for (let row = 1; row <= n; row++) {
         for (let col = 1; col <= n; col++) {
-            if (row - col === k) Vars.add(varName(row, col));
+            if (row - col == k) {
+                VarsInDiagonal.add(varName(row, col));
+            }
         }
     }
-    return atMostOne(Vars);
+    return atMostOne(VarsInDiagonal);
 }
 
-function atMostOneInRisingDiagonal(k: number, n: number): CNF {
-    const Vars = new RecursiveSet<Variable>();
+function atMostOneInRisingDiagonal(k: number, n: number): RecursiveSet<Clause> {
+    const VarsInDiagonal = new RecursiveSet<Variable>();
     for (let row = 1; row <= n; row++) {
         for (let col = 1; col <= n; col++) {
-            if (row + col === k) Vars.add(varName(row, col));
+            if (row + col == k) {
+                VarsInDiagonal.add(varName(row, col));
+            }
         }
     }
-    return atMostOne(Vars);
+    return atMostOne(VarsInDiagonal);
 }
 
-function allClauses(n: number): CNF {
-    // Wir definieren result direkt als CNF (RecursiveSet<Clause>)
+function allClauses(n: number): RecursiveSet<Clause> {
+    const all: Array<RecursiveSet<Clause>> = [];
+    for (let row = 1; row <= n; row++) {
+        all.push(atMostOneInRow(row, n));
+    }
+    for (let k = 3; k <= 2 * n; k++) {
+        all.push(atMostOneInRisingDiagonal(k, n));
+    }
+    for (let k = -(n - 2); k <= n - 2; k++) {
+        all.push(atMostOneInFallingDiagonal(k, n));
+    }
+    for (let col = 1; col <= n; col++) {
+        all.push(oneInColumn(col, n));
+    }
     const result = new RecursiveSet<Clause>();
-    
-    // Helper, um Sets zu mergen
-    const add = (s: CNF) => { for (const c of s) result.add(c); };
-
-    for (let row = 1; row <= n; row++) add(atMostOneInRow(row, n));
-    for (let col = 1; col <= n; col++) add(oneInColumn(col, n));
-    
-    // Diagonalen Constraints
-    for (let k = -(n - 2); k <= n - 2; k++) add(atMostOneInFallingDiagonal(k, n));
-    for (let k = 3; k <= 2 * n; k++) add(atMostOneInRisingDiagonal(k, n));
-    
-    return result; // Kein Cast nötig, da result bereits CNF ist
+    for (const clauses of all) {
+        for (const clause of clauses) {
+             result.add(clause);
+        }
+    }
+    return result;
 }
 
 // ============================================================================
-// 2. VISUALIZATION (ASCII)
+// 3. VISUALIZATION (ASCII)
 // ============================================================================
 
 /**
- * Filtert die Lösung und gibt nur die Variablen zurück, die WAHR sind.
- * (Positive Literale in den Unit-Clauses der Lösung).
+ * Filters the solution and returns only variables that are TRUE.
+ * (Positive literals in the unit clauses of the solution).
  */
-function removeNegativeLiterals(Solution: CNF): RecursiveSet<Variable> {
+function removeNegativeLiterals(Solution: Clauses): RecursiveSet<Variable> {
     const Result = new RecursiveSet<Variable>();
-    
-    for (const C of Solution) {
-        // C ist eine Unit-Clause { L }
-        for (const lit of C) {
-            // TYPE GUARD: 
-            // Literal ist (string | NNFNegation).
-            // Wenn es ein string ist, ist es eine Variable.
+    for (const clause of Solution) {
+        for (const lit of clause) {
+            // Strings are variables (positive), Tuples are negations.
             if (typeof lit === 'string') {
-                Result.add(lit); // TS weiß hier: lit ist string.
+                Result.add(lit);
             }
         }
     }
     return Result;
 }
 
-function transform(Solution: CNF): Record<number, number> {
+function extractRowCol(varName: string): [string, string] {
+    const left = varName.indexOf('<');
+    const comma = varName.indexOf(',');
+    const right = varName.indexOf('>');
+    const row = varName.substring(left + 1, comma);
+    const col = varName.substring(comma + 1, right);
+    return [row, col];
+}
+
+function transform(Solution: RecursiveSet<Clause>): Record<number, number> {
     const positiveLiterals = removeNegativeLiterals(Solution);
     const Result: Record<number, number> = {};
-    
     for (const name of positiveLiterals) {
-        // name ist hier garantiert string (Variable)
-        const left = name.indexOf('<');
-        const comma = name.indexOf(',');
-        const right = name.indexOf('>');
-        
-        const row = name.substring(left + 1, comma);
-        const col = name.substring(comma + 1, right);
-        
+        const [row, col] = extractRowCol(name as string);
         Result[parseInt(row, 10)] = parseInt(col, 10);
     }
     return Result;
 }
 
-function showSolutionASCII(Solution: CNF, n: number) {
+function showSolutionASCII(Solution: RS<Clause>, n: number) {
     const transformed = transform(Solution);
     
-    // Keine positiven Variablen gefunden? Dann ist es UNSAT (oder leere Lösung).
+    // No positive variables found? Then it is UNSAT (or empty solution).
     if (Object.keys(transformed).length === 0) {
         console.log("No solution found (UNSAT).");
         return;
@@ -152,21 +160,21 @@ function showSolutionASCII(Solution: CNF, n: number) {
     for (let row = 1; row <= n; row++) {
         const col = transformed[row];
         if (col !== undefined) {
-            // Array Index ist 0-basiert, Logik ist 1-basiert
+            // Array Index is 0-based, Logic is 1-based
             if (row - 1 < n && col - 1 < n) {
                 boardArray[row - 1][col - 1] = 'Q';
             }
         }
     }
     
-    console.log(`\nSolution for ${n}-Queens (Strict NNF):`);
+    console.log(`\nSolution for ${n}-Queens (Professor's Solver):`);
     for (let r = 0; r < n; r++) {
         console.log(boardArray[r].join(' '));
     }
 }
 
 // ============================================================================
-// 3. BENCHMARK RUNNER
+// 4. BENCHMARK RUNNER
 // ============================================================================
 
 function calculateStats(times: number[]) {
@@ -189,7 +197,7 @@ function calculateStats(times: number[]) {
 }
 
 function runBenchmark(n: number, iterations: number) {
-    console.log(`\n🚀 Starting Benchmark for ${n}-Queens (STRICT NNF Objects)`);
+    console.log(`\nStarting Benchmark for ${n}-Queens`);
     console.log(`Runs: ${iterations}`);
     console.log("------------------------------------------------------------");
 
@@ -197,18 +205,18 @@ function runBenchmark(n: number, iterations: number) {
     const Clauses = allClauses(n);
     console.log(`Clauses generated: ${Clauses.size}`);
 
-    console.log("🔥 Warming up engine (5 runs)...");
-    // Kurzer Warmup, damit JIT Compiler greift
-    for (let i = 0; i < 5; i++) DP.solve(Clauses);
+    console.log("Warming up engine (5 runs)...");
+    // Short warmup to trigger JIT optimizations
+    for (let i = 0; i < 5; i++) solve(Clauses);
     console.log("Warmup complete.");
 
     console.log("⏱️  Measuring...");
     const durations: number[] = [];
-    let lastSolution: CNF | null = null;
+    let lastSolution: RS<Clause> | null = null;
 
     for (let i = 0; i < iterations; i++) {
         const start = performance.now();
-        lastSolution = DP.solve(Clauses);
+        lastSolution = solve(Clauses);
         const end = performance.now();
         
         durations.push(end - start);
@@ -218,7 +226,7 @@ function runBenchmark(n: number, iterations: number) {
 
     const stats = calculateStats(durations);
 
-    console.log("📊 NNF RESULTS 📊");
+    console.log("SOLVER RESULTS");
     console.log("============================");
     console.log(`Min:     ${stats.min.toFixed(2)} ms`);
     console.log(`Max:     ${stats.max.toFixed(2)} ms`);
@@ -232,5 +240,5 @@ function runBenchmark(n: number, iterations: number) {
     }
 }
 
-// Starte Benchmark
+// Start Benchmark
 runBenchmark(16, 10);
