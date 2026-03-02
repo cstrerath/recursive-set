@@ -1,4 +1,4 @@
-import { RecursiveSet, Tuple, Value, flatMap } from '../src/index';
+import { RecursiveSet, Tuple, Value } from '../src/index';
 import { solve } from './07-Davis-Putnam-JW';
 
 // ============================================================================
@@ -142,20 +142,20 @@ function getBlockCells(r: number, c: number): Array<[number, number]> {
 // ============================================================================
 
 function allConstraints(): RS<Clause> {
-    const L = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+    const L = [1, 2, 3, 4, 5, 6, 7, 8, 9]; 
     // 1. Start with constraints from the puzzle
-    let Clauses = constraintsFromPuzzle();
+    const Clauses = constraintsFromPuzzle();
     // 2. There is exactly one digit in every field
     const allCoords = L.flatMap(r => L.map((c): [number, number] => [r, c]));
-    Clauses = flatMap(allCoords, ([row, col]) => exactlyOneDigit(row, col), Clauses);
+    Clauses.flatMap(allCoords, ([row, col]) => exactlyOneDigit(row, col));
     // 3. All entries in a row are unique
-    Clauses = flatMap(L, row => exactlyOnce(L.map(col => [row, col])), Clauses);
+    Clauses.flatMap(L, (row) => exactlyOnce(L.map(col => [row, col])));
     // 4. All entries in a column are unique
-    Clauses = flatMap(L, col => exactlyOnce(L.map(row => [row, col])), Clauses);
+    Clauses.flatMap(L, (col) => exactlyOnce(L.map(row => [row, col])));
     // 5. All entries in a 3x3 square are unique
-    const outerIndices     = new RecursiveSet<number>(0, 1, 2);
+    const outerIndices = new RecursiveSet<number>(0, 1, 2);
     const blockCoordinates = outerIndices.cartesianProduct(outerIndices);
-    Clauses = flatMap(blockCoordinates, ([r, c]) => exactlyOnce(getBlockCells(r, c)), Clauses);
+    Clauses.flatMap(blockCoordinates, (t) => exactlyOnce(getBlockCells(t.get(0), t.get(1))));
     return Clauses;
 }
 

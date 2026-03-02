@@ -1,6 +1,6 @@
 /**
  * @module recursive-set
- * @version 8.3.0
+ * @version 8.4.0
  * @description
  * High-Performance collection library supporting **Value Semantics** (Deep Equality)
  * and recursive structures.
@@ -740,6 +740,25 @@ class RecursiveSet<T extends Value> implements Structural, Iterable<T> {
         }
     }
 
+    /**
+     * Mutates THIS set by adding elements generated from an iterable.
+     * Strictly imperative implementation (void return) to avoid allocations.
+     * Use this for high-performance constraint generation.
+     * @param items Source items to iterate over
+     * @param mapper Function that produces a RecursiveSet of items to add
+     */
+    public flatMap<U>(
+        items: Iterable<U>, 
+        mapper: (element: U) => RecursiveSet<T>
+    ): void {
+        for (const item of items) {
+            const mappedSet = mapper(item);
+            for (const val of mappedSet) {
+                this.add(val);
+            }
+        }
+    }
+
     clone(): RecursiveSet<T> {
         const s = new RecursiveSet<T>();
         if (s._bucketCount !== this._bucketCount) s.ensureCapacity(this.size);
@@ -956,8 +975,8 @@ const hashValue = getHashCode;
 // ============================================================================
 
 /**
- * Maps an iterable to sets and merges them into an initial set.
- * Uses mutation to avoid O(N^2) copying.
+ * Legacy Support / Functional Style:
+ * Maps an iterable to sets and merges them into a NEW set.
  */
 function flatMap<T, U extends Value>(
     items: Iterable<T>, 

@@ -1,4 +1,4 @@
-import { RecursiveSet, Value, Tuple, flatMap } from '../src/index';
+import { RecursiveSet, Value, Tuple } from '../src/index';
 
 type Variable = string;
 type Literal  = Variable 
@@ -126,10 +126,11 @@ function solveRecursive(
     return solveRecursive(S.union(single(single(lBar))), Variables, nextUsedVars);
 }
 
-export function solve(Clauses: RS<Clause>): RS<Clause> {
-    const Variables = flatMap(Clauses, clause => clause.map(extractVariable));
+ export function solve(Clauses: RS<Clause>): RS<Clause> {
+    const Variables = empty<Variable>();
+    Variables.flatMap(Clauses, clause => clause.map(extractVariable));
     return solveRecursive(Clauses, Variables, empty<Variable>());
-}
+} 
 
 function literal_to_str(C: Clause): string {
     const val = arb(C);
