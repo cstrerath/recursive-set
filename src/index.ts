@@ -1,6 +1,6 @@
 /**
  * @module recursive-set
- * @version 8.4.0
+ * @version 8.4.1
  * @description
  * High-Performance collection library supporting **Value Semantics** (Deep Equality)
  * and recursive structures.
