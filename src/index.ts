@@ -742,21 +742,23 @@ class RecursiveSet<T extends Value> implements Structural, Iterable<T> {
 
     /**
      * Mutates THIS set by adding elements generated from an iterable.
-     * Strictly imperative implementation (void return) to avoid allocations.
+     * Strictly imperative implementation to avoid allocations, but returns 'this' for chaining.
      * Use this for high-performance constraint generation.
      * @param items Source items to iterate over
      * @param mapper Function that produces a RecursiveSet of items to add
+     * @returns this (allows chaining)
      */
     public flatMap<U>(
         items: Iterable<U>, 
         mapper: (element: U) => RecursiveSet<T>
-    ): void {
+    ): this {
         for (const item of items) {
             const mappedSet = mapper(item);
             for (const val of mappedSet) {
                 this.add(val);
             }
         }
+        return this;
     }
 
     clone(): RecursiveSet<T> {
