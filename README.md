@@ -113,14 +113,35 @@ interface Structural {
 
 - `new RecursiveSet<T>(...elements: T[])`: Creates a set from the given arguments.
 
-#### Mutation (Unfrozen state only)
+#### Basic Mutation (Unfrozen state only)
 
 - `add(element: T): void`: Adds an element ($O(1)$ amortized).
 - `remove(element: T): void`: Removes an element ($O(1)$ amortized).
 
+#### Advanced In-Place Transformations
+
+These methods allow for high-performance updates of the existing set without creating intermediate collection objects.
+
+- `flatMap<U>(items: Iterable<U>, mapper: (element: U) => RecursiveSet<T>): this`
+  - **Imperative Mutation:** Mutates the current set in-place.
+  - **Efficiency:** Specifically designed for workloads like constraint generation where millions of items are aggregated iteratively.
+  - **Chaining:** Returns `this` to allow for fluent API usage.
+
+```typescript
+import { RecursiveSet } from "recursive-set";
+
+const mySet = new RecursiveSet<number>();
+const inputs: number[] = [10, 20];
+
+// Example: Iteratively expanding constraints
+mySet.flatMap(inputs, (n: number) => new RecursiveSet(n + 1, n + 2));
+
+console.log(mySet); // {11, 12, 21, 22}
+```
+
 #### Functional Methods (Zero-Allocation)
 
-*Added in v8.2.0* — These methods iterate directly over internal storage, avoiding the memory overhead of spreading into a temporary Array (`[...set]`).
+These methods iterate directly over internal storage, avoiding the memory overhead of spreading into a temporary Array (`[...set]`).
 
 - `map<U>(fn: (v: T) => U): RecursiveSet<U>`
   - Returns a new set. Pre-allocates storage to prevent resizing during mapping.
