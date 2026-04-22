@@ -927,6 +927,16 @@ class RecursiveSet<T extends Value> implements Structural, Iterable<T> {
         return result;
     }
 
+    /**
+     * Selects a uniformly random element from the set in O(1) time.
+     * * @remarks
+     * **Implementation Note:** * Do not use a `for...of` loop with a `break` to fetch a random element 
+     * (e.g., `for (const item of set) { return item; }`). Because the internal 
+     * storage is a dense Array (Structure of Arrays) and iteration is deterministic, 
+     * the iterator will consistently yield the exact same first element. 
+     * `pickRandom()` bypasses the iterator and selects a random index directly.
+     * * @returns A random element from the collection, or `undefined` if the set is empty.
+     */
     pickRandom(): T | undefined {
         if (this._values.length === 0) return undefined;
         return this._values[Math.floor(Math.random() * this._values.length)];

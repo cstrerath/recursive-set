@@ -186,6 +186,12 @@ All operations return a new `RecursiveSet` instance.
 - `size: number`
 - `hashCode: number`: Computes hash and freezes the set.
 
+#### Utility Methods
+
+- `pickRandom(): T | undefined`
+  - Returns a genuinely random element from the set in O(1) time.
+  - **Important:** Do *not* use `for (const item of set) { break; }` to get a random element. Because `RecursiveSet` uses a deterministic dense array under the hood, the iterator always starts at index 0 and will consistently yield the exact same element. `pickRandom()` uses internal index-based access to guarantee a uniform random distribution.
+
 ### RecursiveMap
 
 A hash map supporting `Value` keys.
@@ -218,6 +224,7 @@ npm install
 npm run build
 npx tsx test/test.ts
 npx tsx test/nqueens.ts
+npx tsx test/random_test.ts
 ```
 
 ## License
