@@ -210,6 +210,18 @@ An immutable, hashable sequence of values. Useful for composite keys.
 - `get(index: number): T[index]`
 - `length: number`
 
+### Utility Functions
+
+Standalone helper functions exported by the library.
+
+- `flatMap<T, U extends Value>(items: Iterable<T>, f: (element: T) => RecursiveSet<U>, initial?: RecursiveSet<U>): RecursiveSet<U>`
+  - **Functional Style:** Maps an iterable to sets and merges them into a *new* set.
+  - **Difference to Class Method:** Unlike the highly-optimized, in-place `RecursiveSet.prototype.flatMap`, this standalone function creates a mutable copy of the `initial` set (or an empty set if omitted), leaves the sources untouched, and returns a completely new `RecursiveSet` instance.
+- `emptySet<T extends Value>()`: Returns a new, empty `RecursiveSet<T>`.
+- `singleton<T extends Value>(element: T)`: Returns a new `RecursiveSet<T>` containing only the specified element.
+- `getHashCode(val: Value)` / `hashValue(val: Value)`: Computes and returns the internal 32-bit hash code for any supported value. 
+  - *Note: Passing a collection to this function can be used as a trick to explicitly freeze it!*
+
 ## Credits
 
 This library was developed as a student research project under the supervision of **[Karl Stroetmann](https://github.com/karlstroetmann/)**.
